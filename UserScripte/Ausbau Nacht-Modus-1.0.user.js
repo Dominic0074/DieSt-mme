@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -333,9 +333,16 @@ function getNightBuildingLabel(key) {
 }
 
 function buildNightPlanText() {
+  const currentLevels = readStoredNightCurrentLevels();
   return nightQueue
-    .map(entry => `${getNightBuildingLabel(entry.building)} ${entry.level}`)
-    .join(' | ') || 'kein Zielbild';
+    .map(entry => ({
+      building: entry.building,
+      currentLevel: Number(currentLevels[entry.building] || 0),
+      targetLevel: Number(entry.level || 0)
+    }))
+    .filter(entry => entry.currentLevel > 0 && entry.targetLevel > entry.currentLevel)
+    .map(entry => `${getNightBuildingLabel(entry.building)} ${entry.currentLevel} -> ${entry.targetLevel}`)
+    .join(' | ') || 'keine Upgrades offen';
 }
 
 function updateNightPlanDisplays() {
