@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -119,6 +119,15 @@ const RAID_UNIT_LABELS = {
   light: 'LKav',
   marcher: 'Beritt. Bogen',
   heavy: 'SKav'
+};
+const RAID_UNIT_SEARCH_LABELS = {
+  spear: ['Speertraeger', 'Speertr\u00e4ger'],
+  sword: ['Schwertkaempfer', 'Schwertk\u00e4mpfer'],
+  axe: ['Axtkaempfer', 'Axtk\u00e4mpfer'],
+  archer: ['Bogenschuetze', 'Bogensch\u00fctze'],
+  light: ['Leichte Kavallerie'],
+  marcher: ['Berittener Bogenschuetze', 'Berittener Bogensch\u00fctze'],
+  heavy: ['Schwere Kavallerie']
 };
 const RAID_UNIT_CARRY = {
   spear: 25,
@@ -1682,6 +1691,46 @@ function readRaidUnitCountFromTable(input) {
   return match ? Number(match[1] || match[0]) : 0;
 }
 
+function parseTotalUnitCountText(text) {
+  const slashMatch = String(text || '').replace(/\./g, '').match(/(\d+)\s*\/\s*(\d+)/);
+  if (slashMatch) return Number(slashMatch[2]);
+
+  const singleMatch = String(text || '').replace(/\./g, '').match(/\d+/);
+  return singleMatch ? Number(singleMatch[0]) : 0;
+}
+
+function getRecruitUnitRow(unit) {
+  const labels = RAID_UNIT_SEARCH_LABELS[unit] || [RAID_UNIT_LABELS[unit] || unit];
+  const rows = Array.from(document.querySelectorAll('tr'));
+
+  return rows.find(row => {
+    const text = row.textContent || '';
+    const hasLabel = labels.some(label => text.includes(label));
+    const hasUnitMarker = Boolean(row.querySelector(
+      `.unit_link[data-unit="${unit}"],` +
+      `.unit-item-${unit},` +
+      `[data-unit="${unit}"],` +
+      `[class*="unit-${unit}"],` +
+      `img[src*="${unit}"]`
+    ));
+
+    return hasLabel || hasUnitMarker;
+  }) || null;
+}
+
+function readRecruitPageUnitTotal(unit) {
+  if (!isRecruitPage()) return 0;
+
+  const row = getRecruitUnitRow(unit);
+  if (!row) return 0;
+
+  const slashCell = Array.from(row.children)
+    .map(cell => cell.textContent || '')
+    .find(text => /\d+\s*\/\s*\d+/.test(text));
+
+  return parseTotalUnitCountText(slashCell || '');
+}
+
 function getEmptyRaidUnits() {
   return Object.fromEntries(RAID_UNITS.map(unit => [unit, 0]));
 }
@@ -1720,13 +1769,14 @@ function readAvailableRaidUnitsFromPage() {
     const countNode = document.querySelector(`#units_home .unit-item-${unit}, #units_home [data-unit="${unit}"], .unit-item-${unit}`);
     const fromInput = input ? Number(input.getAttribute('data-all-count') || input.dataset.allCount || 0) : 0;
     const fromTable = input ? readRaidUnitCountFromTable(input) : 0;
-    const fromText = countNode ? Number((countNode.textContent || '').replace(/\D+/g, '')) : 0;
+    const fromText = countNode ? parseTotalUnitCountText(countNode.textContent || '') : 0;
+    const fromRecruitPage = readRecruitPageUnitTotal(unit);
     const fromScavengeData = Number(
       window.ScavengeScreen?.village?.unit_counts_home?.[unit] ||
       window.ScavengingOverview?.village_data?.[getCurrentVillageId()]?.unit_counts_home?.[unit] ||
       0
     );
-    result[unit] = Math.max(fromInput || 0, fromTable || 0, fromText || 0, fromScavengeData || 0);
+    result[unit] = Math.max(fromRecruitPage || 0, fromInput || 0, fromTable || 0, fromText || 0, fromScavengeData || 0);
   });
   return result;
 }
