@@ -24,6 +24,9 @@ const RAID_CONFIG = {
   switchPages: true,
   returnToBuildings: true,
   enabledOptions: [1, 2, 3, 4],
+  distributionMode: 'optimizedEqual',
+  maxRaidDurationHours: 0,
+  maxRaidDurationMinutes: 0,
   minUnitsPerRaid: 1,
   actionDelayMin: 100,
   actionDelayMax: 3000,
@@ -103,6 +106,7 @@ const RAID_READY_TIMES_KEY = 'ds_raid_ready_times';
 const RAID_NEXT_SWITCH_KEY = 'ds_raid_next_switch_at';
 const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
+const RAID_STORED_UNITS_KEY = 'ds_raid_stored_units_v1';
 const NIGHT_QUEUE_STORAGE_KEY = 'ds_night_queue_v1';
 const NIGHT_CURRENT_LEVELS_STORAGE_KEY = 'ds_night_current_levels_v1';
 const NIGHT_UPGRADE_INFO_STORAGE_KEY = 'ds_night_upgrade_info_v1';
@@ -115,6 +119,31 @@ const RAID_UNIT_LABELS = {
   light: 'LKav',
   marcher: 'Beritt. Bogen',
   heavy: 'SKav'
+};
+const RAID_UNIT_CARRY = {
+  spear: 25,
+  sword: 15,
+  axe: 10,
+  archer: 10,
+  light: 80,
+  marcher: 50,
+  heavy: 50
+};
+const RAID_SLOT_RATIOS = {
+  1: 0.10,
+  2: 0.25,
+  3: 0.50,
+  4: 0.75
+};
+const RAID_DISTRIBUTION_LABELS = {
+  manual: 'manuell',
+  optimizedEqual: 'gleich lang',
+  optimizedRun: 'pro Lauf',
+  optimizedHour: 'pro Stunde'
+};
+const RAID_RECRUIT_UNITS_BY_SCREEN = {
+  barracks: ['spear', 'sword', 'axe', 'archer'],
+  stable: ['light', 'marcher', 'heavy']
 };
 const NIGHT_BUILDINGS = [
   { key: 'wood', label: 'Holzfaeller' },
@@ -166,6 +195,8 @@ function getCurrentScriptPageName() {
   if (isScavengePage()) return 'Raubzuege';
   if (isBuildingsOverviewPage()) return 'Gebaeude';
   if (isMainBuildingPage()) return 'Hauptgebaeude';
+  if (getCurrentScreen() === 'barracks') return 'Kaserne';
+  if (getCurrentScreen() === 'stable') return 'Stall';
   return 'Andere';
 }
 
@@ -183,6 +214,11 @@ function isRaidAutomationActive() {
 
 function normalizeRaidConfig(config) {
   const normalized = {
+    distributionMode: ['manual', 'optimizedEqual', 'optimizedRun', 'optimizedHour'].includes(config?.distributionMode)
+      ? config.distributionMode
+      : 'optimizedEqual',
+    maxRaidDurationHours: Math.max(0, Math.floor(Number(config?.maxRaidDurationHours || 0))),
+    maxRaidDurationMinutes: Math.max(0, Math.floor(Number(config?.maxRaidDurationMinutes || 0))),
     reserve: {},
     raids: {}
   };
@@ -212,6 +248,9 @@ function getDefaultRaidConfigSnapshot() {
 
 function applyRaidConfigSnapshot(snapshot) {
   const normalized = normalizeRaidConfig(snapshot);
+  RAID_CONFIG.distributionMode = normalized.distributionMode;
+  RAID_CONFIG.maxRaidDurationHours = normalized.maxRaidDurationHours;
+  RAID_CONFIG.maxRaidDurationMinutes = normalized.maxRaidDurationMinutes;
   RAID_CONFIG.reserve = normalized.reserve;
   RAID_CONFIG.raids = normalized.raids;
 }
@@ -763,6 +802,63 @@ function initStatusBanner() {
     #ds-night-config-modal .ds-modal-body {
       padding: 10px;
     }
+    #ds-raid-config-modal .ds-raid-config-controls,
+    #ds-raid-config-modal .ds-raid-reserve-grid {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding: 8px;
+      border: 1px solid #c8b894;
+      background: #fffaf0;
+    }
+    #ds-raid-config-modal .ds-raid-config-controls label,
+    #ds-raid-config-modal .ds-raid-reserve-grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      color: #5b2d14;
+      font-weight: bold;
+    }
+    #ds-raid-config-modal .ds-raid-config-controls select {
+      min-width: 240px;
+      box-sizing: border-box;
+      padding: 3px;
+      border: 1px solid #a58b5e;
+      background: #fff;
+      color: #2f2417;
+      font: 12px Arial, sans-serif;
+    }
+    #ds-raid-config-modal .ds-raid-reserve-grid strong {
+      align-self: center;
+      color: #5b2d14;
+    }
+    #ds-raid-config-modal .ds-raid-preview {
+      margin-bottom: 10px;
+      padding: 8px;
+      border: 1px solid #c8b894;
+      background: #fffaf0;
+    }
+    #ds-raid-config-modal .ds-raid-preview-title {
+      margin-bottom: 6px;
+      color: #5b2d14;
+      font-weight: bold;
+    }
+    #ds-raid-config-modal .ds-raid-preview-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 8px;
+      line-height: 1.45;
+    }
+    #ds-raid-config-modal .ds-raid-preview-summary span {
+      color: #5b2d14;
+    }
+    #ds-raid-config-modal .ds-raid-preview-empty {
+      color: #7d766b;
+      font-style: italic;
+    }
     #ds-raid-config-modal table,
     #ds-night-config-modal table {
       width: 100%;
@@ -837,11 +933,18 @@ function initStatusBanner() {
 }
 
 function buildRaidPlanText() {
-  return RAID_CONFIG.enabledOptions
+  const modeLabel = RAID_DISTRIBUTION_LABELS[RAID_CONFIG.distributionMode] || RAID_CONFIG.distributionMode;
+  const maxDuration = getRaidMaxDurationSeconds();
+  const prefix = RAID_CONFIG.distributionMode === 'manual'
+    ? `Modus ${modeLabel}`
+    : `Modus ${modeLabel}${maxDuration ? ` bis ${formatDuration(maxDuration * 1000)}` : ''}`;
+  const slotPlan = RAID_CONFIG.enabledOptions
     .map(index => ({ index, config: getRaidConfig(index) }))
     .filter(({ config }) => config && config.enabled !== false)
     .map(({ index, config }) => `${index}: ${formatRaidUnits(config.units) || 'keine Truppen'}`)
-    .join(' | ') || 'keine aktiven Slots';
+    .join(' | ');
+
+  return `${prefix} | ${slotPlan || 'keine aktiven Slots'}`;
 }
 
 function updateRaidPlanDisplays() {
@@ -876,12 +979,15 @@ function buildRaidConfigRows() {
 
 function readRaidConfigFromModal(modal) {
   const snapshot = {
+    distributionMode: modal.querySelector('[data-raid-distribution-mode="1"]')?.value || 'manual',
+    maxRaidDurationHours: Math.max(0, Math.floor(Number(modal.querySelector('[data-raid-max-hours="1"]')?.value || 0))),
+    maxRaidDurationMinutes: Math.max(0, Math.floor(Number(modal.querySelector('[data-raid-max-minutes="1"]')?.value || 0))),
     reserve: {},
     raids: {}
   };
 
   RAID_UNITS.forEach(unit => {
-    snapshot.reserve[unit] = Number(RAID_CONFIG.reserve?.[unit] || 0);
+    snapshot.reserve[unit] = Math.max(0, Math.floor(Number(modal.querySelector(`[data-reserve-unit="${unit}"]`)?.value || 0)));
   });
 
   [1, 2, 3, 4].forEach(index => {
@@ -899,6 +1005,145 @@ function readRaidConfigFromModal(modal) {
   return snapshot;
 }
 
+function withTemporaryRaidConfig(snapshot, callback) {
+  const previous = normalizeRaidConfig(RAID_CONFIG);
+  applyRaidConfigSnapshot(snapshot);
+
+  try {
+    return callback();
+  } finally {
+    applyRaidConfigSnapshot(previous);
+  }
+}
+
+function formatRaidNumber(value, digits = 0) {
+  if (!Number.isFinite(value)) return '0';
+  return Number(value).toLocaleString('de-DE', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  });
+}
+
+function getRaidPreviewPlan(availableUnits) {
+  const previewOptions = RAID_CONFIG.enabledOptions
+    .filter(index => getRaidConfig(index)?.enabled !== false)
+    .map(index => ({ index }));
+
+  if (RAID_CONFIG.distributionMode === 'manual') {
+    const remainingUnits = normalizeRaidUnits(availableUnits);
+    const plan = {};
+
+    previewOptions.forEach(({ index }) => {
+      const units = getConfiguredRaidUnits(index, remainingUnits);
+      if (!units || sumRaidUnits(units) < RAID_CONFIG.minUnitsPerRaid) return;
+
+      plan[index] = units;
+      subtractRaidUnits(remainingUnits, units);
+    });
+
+    return plan;
+  }
+
+  return calculateOptimizedRaidPlan(availableUnits, previewOptions);
+}
+
+function buildRaidPreviewRows(plan) {
+  const durationFactor = getRaidDurationFactor();
+
+  return RAID_CONFIG.enabledOptions
+    .filter(index => getRaidConfig(index)?.enabled !== false)
+    .map(index => {
+      const units = plan[index] || getEmptyRaidUnits();
+      const capacity = getRaidCapacity(units);
+      const ratio = RAID_SLOT_RATIOS[index] || 0;
+      const duration = getRaidDurationSeconds(capacity, ratio, durationFactor);
+      const loot = capacity * ratio;
+      const lootPerHour = duration > 0 ? (loot / duration) * 3600 : 0;
+
+      return {
+        index,
+        units,
+        capacity,
+        duration,
+        loot,
+        lootPerHour
+      };
+    });
+}
+
+function renderRaidPreview(snapshot) {
+  const availableUnits = readAvailableRaidUnits();
+
+  return withTemporaryRaidConfig(snapshot, () => {
+    const plan = getRaidPreviewPlan(availableUnits);
+    const rows = buildRaidPreviewRows(plan);
+    const usableUnits = getAvailableRaidUnitsAfterReserve(availableUnits);
+    const availableTotal = sumRaidUnits(availableUnits);
+    const usableTotal = sumRaidUnits(usableUnits);
+    const plannedTotal = rows.reduce((sum, row) => sum + sumRaidUnits(row.units), 0);
+    const plannedCapacity = rows.reduce((sum, row) => sum + row.capacity, 0);
+    const totalLootPerHour = rows.reduce((sum, row) => sum + row.lootPerHour, 0);
+    const hasPlan = rows.some(row => sumRaidUnits(row.units) > 0);
+
+    if (!hasPlan) {
+      return `
+        <div class="ds-raid-preview-title">Berechnete Vorschau</div>
+        <div class="ds-raid-preview-summary">
+          <span>Truppen gesamt: <strong>${formatRaidNumber(availableTotal)}</strong></span>
+          <span>Nach Reserve: <strong>${formatRaidNumber(usableTotal)}</strong></span>
+          <span>Bestand: <strong>${formatRaidUnits(availableUnits) || '-'}</strong></span>
+          <span>Nutzbar: <strong>${formatRaidUnits(usableUnits) || '-'}</strong></span>
+        </div>
+        <div class="ds-raid-preview-empty">Keine passende Verteilung berechnet. Pruefe aktive Slots, Reserven und gespeicherte Truppen.</div>
+      `;
+    }
+
+    return `
+      <div class="ds-raid-preview-title">Berechnete Vorschau</div>
+      <div class="ds-raid-preview-summary">
+        <span>Truppen gesamt: <strong>${formatRaidNumber(availableTotal)}</strong></span>
+        <span>Nach Reserve: <strong>${formatRaidNumber(usableTotal)}</strong></span>
+        <span>Verplant: <strong>${formatRaidNumber(plannedTotal)}</strong></span>
+        <span>Kapazitaet: <strong>${formatRaidNumber(plannedCapacity)}</strong></span>
+        <span>Beute/h gesamt: <strong>${formatRaidNumber(totalLootPerHour, 2)}</strong></span>
+        <span>Bestand: <strong>${formatRaidUnits(availableUnits) || '-'}</strong></span>
+        <span>Nutzbar: <strong>${formatRaidUnits(usableUnits) || '-'}</strong></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Raubzug</th>
+            <th>Truppen</th>
+            <th>Verteilung</th>
+            <th>Beute</th>
+            <th>Beute/h</th>
+            <th>Dauer</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td>Slot ${row.index}</td>
+              <td>${formatRaidNumber(sumRaidUnits(row.units))}</td>
+              <td>${formatRaidUnits(row.units) || '-'}</td>
+              <td>${formatRaidNumber(row.loot, 2)}</td>
+              <td>${formatRaidNumber(row.lootPerHour, 2)}</td>
+              <td>${row.duration ? formatDuration(row.duration * 1000) : '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  });
+}
+
+function updateRaidConfigPreview(modal) {
+  const target = modal.querySelector('[data-raid-preview="1"]');
+  if (!target) return;
+
+  target.innerHTML = renderRaidPreview(readRaidConfigFromModal(modal));
+}
+
 function openRaidConfigModal() {
   closeRaidConfigModal();
 
@@ -911,6 +1156,34 @@ function openRaidConfigModal() {
         <button type="button" data-action="closeRaidConfig">Schliessen</button>
       </div>
       <div class="ds-modal-body">
+        <div class="ds-raid-config-controls">
+          <label>
+            Modus
+            <select data-raid-distribution-mode="1">
+              <option value="manual" ${RAID_CONFIG.distributionMode === 'manual' ? 'selected' : ''}>Manuell konfigurierte Truppen</option>
+              <option value="optimizedEqual" ${RAID_CONFIG.distributionMode === 'optimizedEqual' ? 'selected' : ''}>Optimiert: alle Raubzuege gleich lang</option>
+              <option value="optimizedRun" ${RAID_CONFIG.distributionMode === 'optimizedRun' ? 'selected' : ''}>Optimiert: Ressourcen pro Lauf</option>
+              <option value="optimizedHour" ${RAID_CONFIG.distributionMode === 'optimizedHour' ? 'selected' : ''}>Optimiert: Ressourcen pro Stunde</option>
+            </select>
+          </label>
+          <label>
+            Max. Laufzeit
+            <span>
+              <input type="number" min="0" step="1" data-raid-max-hours="1" value="${Number(RAID_CONFIG.maxRaidDurationHours || 0)}"> h
+              <input type="number" min="0" step="1" data-raid-max-minutes="1" value="${Number(RAID_CONFIG.maxRaidDurationMinutes || 0)}"> min
+            </span>
+          </label>
+        </div>
+        <div class="ds-raid-reserve-grid">
+          <strong>Reserve</strong>
+          ${RAID_UNITS.map(unit => `
+            <label>
+              ${RAID_UNIT_LABELS[unit] || unit}
+              <input type="number" min="0" step="1" data-reserve-unit="${unit}" value="${Number(RAID_CONFIG.reserve?.[unit] || 0)}">
+            </label>
+          `).join('')}
+        </div>
+        <div class="ds-raid-preview" data-raid-preview="1"></div>
         <table>
           <thead>
             <tr>
@@ -950,6 +1223,10 @@ function openRaidConfigModal() {
     resetPersistentRaidConfig();
     closeRaidConfigModal();
   });
+  const updatePreview = () => updateRaidConfigPreview(modal);
+  modal.addEventListener('input', updatePreview);
+  modal.addEventListener('change', updatePreview);
+  updatePreview();
 }
 
 function closeNightQueueModal() {
@@ -1163,6 +1440,14 @@ function isMainBuildingPage() {
 
 function getCurrentVillageId() {
   return new URLSearchParams(location.search).get('village');
+}
+
+function getCurrentScreen() {
+  return new URLSearchParams(location.search).get('screen') || '';
+}
+
+function isRecruitPage() {
+  return ['barracks', 'stable'].includes(getCurrentScreen());
 }
 
 function buildGameUrl(screen, mode) {
@@ -1397,7 +1682,37 @@ function readRaidUnitCountFromTable(input) {
   return match ? Number(match[1] || match[0]) : 0;
 }
 
-function readAvailableRaidUnits() {
+function getEmptyRaidUnits() {
+  return Object.fromEntries(RAID_UNITS.map(unit => [unit, 0]));
+}
+
+function sumRaidUnits(units) {
+  return RAID_UNITS.reduce((sum, unit) => sum + Math.max(0, Number(units?.[unit] || 0)), 0);
+}
+
+function normalizeRaidUnits(units) {
+  const normalized = getEmptyRaidUnits();
+  RAID_UNITS.forEach(unit => {
+    normalized[unit] = Math.max(0, Math.floor(Number(units?.[unit] || 0)));
+  });
+  return normalized;
+}
+
+function readStoredRaidUnits() {
+  try {
+    const raw = localStorage.getItem(RAID_STORED_UNITS_KEY);
+    if (!raw) return getEmptyRaidUnits();
+    return normalizeRaidUnits(JSON.parse(raw));
+  } catch (e) {
+    return getEmptyRaidUnits();
+  }
+}
+
+function saveStoredRaidUnits(units) {
+  localStorage.setItem(RAID_STORED_UNITS_KEY, JSON.stringify(normalizeRaidUnits(units)));
+}
+
+function readAvailableRaidUnitsFromPage() {
   const result = {};
   const unitInputs = getRaidUnitInputs();
   RAID_UNITS.forEach(unit => {
@@ -1414,6 +1729,33 @@ function readAvailableRaidUnits() {
     result[unit] = Math.max(fromInput || 0, fromTable || 0, fromText || 0, fromScavengeData || 0);
   });
   return result;
+}
+
+function storeCurrentRaidUnitsFromRecruitPages() {
+  if (!isRecruitPage()) return;
+
+  const screen = getCurrentScreen();
+  const relevantUnits = RAID_RECRUIT_UNITS_BY_SCREEN[screen] || [];
+  const pageUnits = readAvailableRaidUnitsFromPage();
+  const storedUnits = readStoredRaidUnits();
+  const foundRelevantUnits = relevantUnits.some(unit => Number(pageUnits[unit] || 0) > 0);
+  if (!foundRelevantUnits) return;
+
+  relevantUnits.forEach(unit => {
+    storedUnits[unit] = Math.max(0, Math.floor(Number(pageUnits[unit] || 0)));
+  });
+
+  saveStoredRaidUnits(storedUnits);
+}
+
+function readAvailableRaidUnits() {
+  const pageUnits = normalizeRaidUnits(readAvailableRaidUnitsFromPage());
+  if (sumRaidUnits(pageUnits) > 0) {
+    saveStoredRaidUnits(pageUnits);
+    return pageUnits;
+  }
+
+  return readStoredRaidUnits();
 }
 
 function setRaidInputValue(input, value) {
@@ -1456,6 +1798,203 @@ function getConfiguredRaidUnits(index, availableUnits) {
 
   const total = Object.values(result).reduce((sum, value) => sum + value, 0);
   return total >= RAID_CONFIG.minUnitsPerRaid ? result : null;
+}
+
+function getRaidMaxDurationSeconds() {
+  const hours = Math.max(0, Math.floor(Number(RAID_CONFIG.maxRaidDurationHours || 0)));
+  const minutes = Math.max(0, Math.floor(Number(RAID_CONFIG.maxRaidDurationMinutes || 0)));
+  const seconds = (hours * 3600) + (minutes * 60);
+  return seconds > 0 ? seconds : null;
+}
+
+function getRaidWorldSpeed() {
+  const speed = Number(window.game_data?.speed || window.TribalWars?.worldConfig?.speed || 0);
+  return Number.isFinite(speed) && speed > 0 ? speed : 1.6;
+}
+
+function getRaidDurationFactor() {
+  return Math.pow(getRaidWorldSpeed(), -0.55);
+}
+
+function getRaidDurationSeconds(capacity, ratio, durationFactor) {
+  if (capacity <= 0 || ratio <= 0) return 0;
+  return (Math.pow((capacity * capacity) * 100 * (ratio * ratio), 0.45) + 1800) * durationFactor;
+}
+
+function getRaidMaxCapacityForDuration(maxDurationSeconds, ratio, durationFactor) {
+  if (!maxDurationSeconds) return Infinity;
+  const base = (maxDurationSeconds / durationFactor) - 1800;
+  if (base <= 0) return 0;
+  return Math.sqrt(Math.pow(base, 1 / 0.45) / (100 * ratio * ratio));
+}
+
+function getRaidCapacity(units) {
+  return RAID_UNITS.reduce((sum, unit) => {
+    return sum + Math.max(0, Number(units?.[unit] || 0)) * RAID_UNIT_CARRY[unit];
+  }, 0);
+}
+
+function getAvailableRaidUnitsAfterReserve(availableUnits) {
+  const result = {};
+  RAID_UNITS.forEach(unit => {
+    const reserve = Math.max(0, Number(RAID_CONFIG.reserve?.[unit] || 0));
+    result[unit] = Math.max(0, Number(availableUnits?.[unit] || 0) - reserve);
+  });
+  return result;
+}
+
+function getEqualDurationCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor) {
+  const inverseSum = ratios.reduce((sum, ratio) => sum + (1 / ratio), 0);
+  let capacities = ratios.map(ratio => totalCapacity / (ratio * inverseSum));
+
+  if (maxDurationSeconds) {
+    const caps = ratios.map(ratio => getRaidMaxCapacityForDuration(maxDurationSeconds, ratio, durationFactor));
+    const scale = Math.min(...capacities.map((capacity, index) => capacity > 0 ? caps[index] / capacity : Infinity));
+    if (Number.isFinite(scale) && scale < 1) capacities = capacities.map(capacity => capacity * scale);
+  }
+
+  return capacities;
+}
+
+function getPerRunCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor) {
+  const order = ratios.map((ratio, index) => ({ ratio, index })).sort((a, b) => b.ratio - a.ratio);
+  const capacities = new Array(ratios.length).fill(0);
+  let remaining = totalCapacity;
+
+  order.forEach(({ ratio, index }) => {
+    if (remaining <= 0) return;
+    const maxCapacity = getRaidMaxCapacityForDuration(maxDurationSeconds, ratio, durationFactor);
+    const take = Math.min(remaining, maxCapacity);
+    capacities[index] = take;
+    remaining -= take;
+  });
+
+  return capacities;
+}
+
+function getPerHourCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor) {
+  const capacities = new Array(ratios.length).fill(0);
+  let remaining = totalCapacity;
+  const maxCaps = ratios.map(ratio => getRaidMaxCapacityForDuration(maxDurationSeconds, ratio, durationFactor));
+  const stepSize = Math.max(10, Math.ceil(totalCapacity / 500));
+
+  for (let step = 0; step < 500 && remaining > 0; step++) {
+    let bestIndex = -1;
+    let bestGain = -Infinity;
+
+    ratios.forEach((ratio, index) => {
+      if (capacities[index] >= maxCaps[index]) return;
+
+      const current = capacities[index];
+      const increment = Math.min(stepSize, remaining, maxCaps[index] - current);
+      if (increment <= 0) return;
+
+      const beforeDuration = getRaidDurationSeconds(current, ratio, durationFactor);
+      const afterDuration = getRaidDurationSeconds(current + increment, ratio, durationFactor);
+      const before = beforeDuration > 0 ? (current * ratio) / beforeDuration : 0;
+      const after = afterDuration > 0 ? ((current + increment) * ratio) / afterDuration : 0;
+      const gain = after - before;
+
+      if (gain > bestGain) {
+        bestGain = gain;
+        bestIndex = index;
+      }
+    });
+
+    if (bestIndex < 0) break;
+
+    const increment = Math.min(stepSize, remaining, maxCaps[bestIndex] - capacities[bestIndex]);
+    capacities[bestIndex] += increment;
+    remaining -= increment;
+  }
+
+  return capacities;
+}
+
+function allocateRaidUnitsToCapacities(targetCapacities, availableUnits, activeIndexes) {
+  const allocation = {};
+  const remainingUnits = normalizeRaidUnits(availableUnits);
+  const unitsByCarry = RAID_UNITS.slice().sort((a, b) => RAID_UNIT_CARRY[b] - RAID_UNIT_CARRY[a]);
+
+  activeIndexes.forEach((index, position) => {
+    allocation[index] = getEmptyRaidUnits();
+    let remainingCapacity = Math.max(0, Number(targetCapacities[position] || 0));
+
+    unitsByCarry.forEach(unit => {
+      if (remainingCapacity <= 0) return;
+
+      const carry = RAID_UNIT_CARRY[unit];
+      const available = Math.max(0, Number(remainingUnits[unit] || 0));
+      const take = Math.min(available, Math.floor(remainingCapacity / carry));
+      if (take <= 0) return;
+
+      allocation[index][unit] = take;
+      remainingUnits[unit] -= take;
+      remainingCapacity -= take * carry;
+    });
+  });
+
+  if (!getRaidMaxDurationSeconds()) {
+    unitsByCarry.forEach(unit => {
+      let left = Math.max(0, Number(remainingUnits[unit] || 0));
+      while (left > 0) {
+        let bestPosition = -1;
+        let smallestOverflow = Infinity;
+
+        activeIndexes.forEach((index, position) => {
+          const currentCapacity = getRaidCapacity(allocation[index]);
+          const overflow = Math.max(0, currentCapacity + RAID_UNIT_CARRY[unit] - targetCapacities[position]);
+          if (overflow < smallestOverflow) {
+            smallestOverflow = overflow;
+            bestPosition = position;
+          }
+        });
+
+        if (bestPosition < 0) break;
+        const index = activeIndexes[bestPosition];
+        allocation[index][unit] += 1;
+        left--;
+      }
+    });
+  }
+
+  return allocation;
+}
+
+function calculateOptimizedRaidPlan(availableUnits, freeOptions) {
+  const activeIndexes = freeOptions
+    .map(({ index }) => index)
+    .filter(index => RAID_CONFIG.enabledOptions.includes(index) && getRaidConfig(index)?.enabled !== false && RAID_SLOT_RATIOS[index])
+    .sort((a, b) => a - b);
+
+  if (activeIndexes.length === 0) return {};
+
+  const usableUnits = getAvailableRaidUnitsAfterReserve(availableUnits);
+  const totalCapacity = getRaidCapacity(usableUnits);
+  if (totalCapacity <= 0) return {};
+
+  const ratios = activeIndexes.map(index => RAID_SLOT_RATIOS[index]);
+  const maxDurationSeconds = getRaidMaxDurationSeconds();
+  const durationFactor = getRaidDurationFactor();
+  let targetCapacities;
+
+  if (RAID_CONFIG.distributionMode === 'optimizedRun') {
+    targetCapacities = getPerRunCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor);
+  } else if (RAID_CONFIG.distributionMode === 'optimizedHour') {
+    targetCapacities = getPerHourCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor);
+  } else {
+    targetCapacities = getEqualDurationCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor);
+  }
+
+  return allocateRaidUnitsToCapacities(targetCapacities, usableUnits, activeIndexes);
+}
+
+function getRaidUnitsForOption(index, availableUnits, optimizedPlan) {
+  if (RAID_CONFIG.distributionMode === 'manual') return getConfiguredRaidUnits(index, availableUnits);
+
+  const units = optimizedPlan?.[index] || null;
+  if (!units || sumRaidUnits(units) < RAID_CONFIG.minUnitsPerRaid) return null;
+  return units;
 }
 
 function applyRaidUnitsToOption(option, units) {
@@ -1542,14 +2081,17 @@ async function startScavengingRaids() {
 
     let sent = 0;
     const availableUnits = readAvailableRaidUnits();
+    const optimizedPlan = RAID_CONFIG.distributionMode === 'manual'
+      ? {}
+      : calculateOptimizedRaidPlan(availableUnits, options);
 
     for (let i = 0; i < options.length; i++) {
       if (BOT_PROTECTION_TRIGGERED) return;
 
       const { option, index } = options[i];
-      const raidUnits = getConfiguredRaidUnits(index, availableUnits);
+      const raidUnits = getRaidUnitsForOption(index, availableUnits, optimizedPlan);
       if (!raidUnits) {
-        setStatus(`Raubzug ${index}: zu wenig konfigurierte Truppen verfuegbar.`);
+        setStatus(`Raubzug ${index}: zu wenig passende Truppen verfuegbar.`);
         continue;
       }
 
@@ -1685,6 +2227,7 @@ async function startNightBuilding() {
   'use strict';
   loadPersistentRaidConfig();
   loadPersistentNightQueue();
+  storeCurrentRaidUnitsFromRecruitPages();
   storeCurrentNightLevelsFromMainPage();
   storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
