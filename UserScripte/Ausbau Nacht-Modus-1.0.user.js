@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -141,6 +141,7 @@ const RAID_NEXT_SWITCH_KEY = 'ds_raid_next_switch_at';
 const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
 const NIGHT_QUEUE_STORAGE_KEY = 'ds_night_queue_v1';
+const NIGHT_CURRENT_LEVELS_STORAGE_KEY = 'ds_night_current_levels_v1';
 const RAID_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy'];
 const RAID_UNIT_LABELS = {
   spear: 'Speer',
@@ -201,6 +202,7 @@ function formatDuration(ms) {
 function getCurrentScriptPageName() {
   if (isScavengePage()) return 'Raubzuege';
   if (isBuildingsOverviewPage()) return 'Gebaeude';
+  if (isMainBuildingPage()) return 'Hauptgebaeude';
   return 'Andere';
 }
 
@@ -332,6 +334,101 @@ function updateNightPlanDisplays() {
   document.querySelectorAll('[data-field="nightPlan"]').forEach(node => {
     node.textContent = planText;
   });
+}
+
+function readStoredNightCurrentLevels() {
+  try {
+    const raw = localStorage.getItem(NIGHT_CURRENT_LEVELS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([building, level]) => [building, Math.max(0, Math.floor(Number(level || 0)))])
+        .filter(([building, level]) => NIGHT_BUILDING_KEYS.includes(building) && level > 0)
+    );
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveNightCurrentLevels(levels) {
+  const normalized = {};
+  NIGHT_BUILDING_KEYS.forEach(building => {
+    const level = Math.max(0, Math.floor(Number(levels?.[building] || 0)));
+    if (level > 0) normalized[building] = level;
+  });
+
+  localStorage.setItem(NIGHT_CURRENT_LEVELS_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+function getStoredNightCurrentLevel(building) {
+  return readStoredNightCurrentLevels()[building] || '-';
+}
+
+function parseLevelFromText(text) {
+  const match = String(text || '').match(/(?:Stufe|Level)\s*(\d+)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function parseBuildingLevelFromText(text, label) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = String(text || '').match(new RegExp(`${escapedLabel}[\\s\\S]{0,80}?(?:Stufe|Level)\\s*(\\d+)`, 'i'));
+  return match ? Number(match[1]) : 0;
+}
+
+function getNightBuildingSearchLabels(building) {
+  const aliases = {
+    wood: ['Holzfaeller', 'Holzf\\u00e4ller'],
+    main: ['Hauptgebaeude', 'Hauptgeb\\u00e4ude'],
+    smith: ['Schmiede'],
+    place: ['Versammlungsplatz']
+  };
+
+  return aliases[building.key] || [building.label];
+}
+
+function readCurrentNightLevelsFromMainPage() {
+  const levels = {};
+  const content = document.querySelector('#content_value') || document;
+
+  NIGHT_BUILDINGS.forEach(({ key, label }) => {
+    const selectors = [
+      `#main_buildrow_${key}`,
+      `#main_buildlink_${key}`,
+      `[data-building="${key}"]`,
+      `.building_${key}`,
+      `.b_${key}`
+    ];
+
+    const node = selectors
+      .map(selector => content.querySelector(selector))
+      .find(Boolean);
+
+    const text = node?.closest('tr')?.textContent || node?.textContent || '';
+    const directLevel = parseLevelFromText(text);
+    if (directLevel > 0) levels[key] = directLevel;
+  });
+
+  const fullText = content.textContent || '';
+  NIGHT_BUILDINGS.forEach(building => {
+    const { key } = building;
+    if (levels[key] > 0) return;
+    const level = getNightBuildingSearchLabels(building)
+      .map(label => parseBuildingLevelFromText(fullText, label))
+      .find(value => value > 0) || 0;
+    if (level > 0) levels[key] = level;
+  });
+
+  return levels;
+}
+
+function storeCurrentNightLevelsFromMainPage() {
+  if (!isMainBuildingPage()) return;
+
+  const levels = readCurrentNightLevelsFromMainPage();
+  if (Object.keys(levels).length === 0) return;
+
+  saveNightCurrentLevels(levels);
 }
 
 function startRaidAutomation() {
@@ -730,6 +827,7 @@ function buildNightQueueRows(queue) {
           ${buildNightBuildingOptions(entry.building)}
         </select>
       </td>
+      <td data-night-current-level="1">${getStoredNightCurrentLevel(entry.building)}</td>
       <td>
         <input type="number" min="1" step="1" data-night-level="1" value="${entry.level}">
       </td>
@@ -779,6 +877,7 @@ function openNightQueueModal() {
             <tr>
               <th>#</th>
               <th>Gebaeude</th>
+              <th>Aktuell</th>
               <th>Ziellevel</th>
               <th>Aktion</th>
             </tr>
@@ -844,6 +943,13 @@ function openNightQueueModal() {
       [queue[index + 1], queue[index]] = [queue[index], queue[index + 1]];
       rerender(queue);
     }
+  });
+  modal.addEventListener('change', event => {
+    if (!event.target?.matches?.('[data-night-building="1"]')) return;
+
+    const row = event.target.closest('[data-night-row="1"]');
+    const currentCell = row?.querySelector('[data-night-current-level="1"]');
+    if (currentCell) currentCell.textContent = getStoredNightCurrentLevel(event.target.value);
   });
 }
 
@@ -947,6 +1053,10 @@ function isScavengePage() {
 
 function isBuildingsOverviewPage() {
   return location.href.includes('screen=overview_villages') && location.href.includes('mode=buildings');
+}
+
+function isMainBuildingPage() {
+  return location.href.includes('screen=main');
 }
 
 function getCurrentVillageId() {
@@ -1480,6 +1590,7 @@ async function startNightBuilding() {
   'use strict';
   loadPersistentRaidConfig();
   loadPersistentNightQueue();
+  storeCurrentNightLevelsFromMainPage();
   initStatusBanner();
   insertRaidPanel();
   scheduleRaidPageSwitch();
