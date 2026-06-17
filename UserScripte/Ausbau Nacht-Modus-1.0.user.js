@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/Ausbau%20Nacht-Modus-1.0.user.js
+// @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/Ausbau%20Nacht-Modus-1.0.user.js
 // ==/UserScript==
 
 // ═══════════════════════════════════════════════════════════════
