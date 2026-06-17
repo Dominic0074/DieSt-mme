@@ -138,6 +138,7 @@ const RAID_READY_TIMES_KEY = 'ds_raid_ready_times';
 const RAID_NEXT_SWITCH_KEY = 'ds_raid_next_switch_at';
 const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
+const NIGHT_QUEUE_STORAGE_KEY = 'ds_night_queue_v1';
 const RAID_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy'];
 const RAID_UNIT_LABELS = {
   spear: 'Speer',
@@ -148,7 +149,26 @@ const RAID_UNIT_LABELS = {
   marcher: 'Beritt. Bogen',
   heavy: 'SKav'
 };
+const NIGHT_BUILDINGS = [
+  { key: 'wood', label: 'Holzfaeller' },
+  { key: 'stone', label: 'Lehmgrube' },
+  { key: 'iron', label: 'Eisenmine' },
+  { key: 'main', label: 'Hauptgebaeude' },
+  { key: 'storage', label: 'Speicher' },
+  { key: 'farm', label: 'Bauernhof' },
+  { key: 'place', label: 'Versammlungsplatz' },
+  { key: 'hide', label: 'Versteck' },
+  { key: 'barracks', label: 'Kaserne' },
+  { key: 'stable', label: 'Stall' },
+  { key: 'garage', label: 'Werkstatt' },
+  { key: 'smith', label: 'Schmiede' },
+  { key: 'market', label: 'Marktplatz' },
+  { key: 'wall', label: 'Wall' },
+  { key: 'snob', label: 'Adelshof' }
+];
+const NIGHT_BUILDING_KEYS = NIGHT_BUILDINGS.map(building => building.key);
 const RAID_DEFAULT_CONFIG = JSON.parse(JSON.stringify(RAID_CONFIG));
+const DEFAULT_NIGHT_QUEUE = JSON.parse(JSON.stringify(nightQueue));
 
 function Sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -185,6 +205,7 @@ function getCurrentScriptPageName() {
 function getNightModeStatus() {
   if (!isBuildingsOverviewPage()) return 'wartet';
   if (BOT_PROTECTION_TRIGGERED) return 'gestoppt';
+  if (!nightQueue || nightQueue.length === 0) return 'kein Zielbild';
   if (sessionStorage.getItem(STORAGE_KEY) === '1') return 'Reload geplant';
   return 'aktiv';
 }
@@ -251,6 +272,66 @@ function resetPersistentRaidConfig() {
   updateRaidPlanDisplays();
 }
 
+function normalizeNightQueue(queue) {
+  if (!Array.isArray(queue)) return [];
+
+  return queue
+    .map(entry => ({
+      building: String(entry?.building || '').trim(),
+      level: Math.max(1, Math.floor(Number(entry?.level || 0)))
+    }))
+    .filter(entry => NIGHT_BUILDING_KEYS.includes(entry.building) && entry.level > 0);
+}
+
+function applyNightQueueSnapshot(snapshot) {
+  const normalized = normalizeNightQueue(snapshot);
+  nightQueue.splice(0, nightQueue.length, ...normalized);
+}
+
+function getDefaultNightQueueSnapshot() {
+  return normalizeNightQueue(DEFAULT_NIGHT_QUEUE);
+}
+
+function loadPersistentNightQueue() {
+  try {
+    const raw = localStorage.getItem(NIGHT_QUEUE_STORAGE_KEY);
+    if (!raw) return;
+    applyNightQueueSnapshot(JSON.parse(raw));
+  } catch (e) {
+    console.warn('Nacht-Zielbild konnte nicht geladen werden:', e);
+  }
+}
+
+function savePersistentNightQueue(snapshot) {
+  const normalized = normalizeNightQueue(snapshot);
+  localStorage.setItem(NIGHT_QUEUE_STORAGE_KEY, JSON.stringify(normalized));
+  applyNightQueueSnapshot(normalized);
+  updateNightPlanDisplays();
+}
+
+function resetPersistentNightQueue() {
+  localStorage.removeItem(NIGHT_QUEUE_STORAGE_KEY);
+  applyNightQueueSnapshot(getDefaultNightQueueSnapshot());
+  updateNightPlanDisplays();
+}
+
+function getNightBuildingLabel(key) {
+  return NIGHT_BUILDINGS.find(building => building.key === key)?.label || key;
+}
+
+function buildNightPlanText() {
+  return nightQueue
+    .map(entry => `${getNightBuildingLabel(entry.building)} ${entry.level}`)
+    .join(' | ') || 'kein Zielbild';
+}
+
+function updateNightPlanDisplays() {
+  const planText = buildNightPlanText();
+  document.querySelectorAll('[data-field="nightPlan"]').forEach(node => {
+    node.textContent = planText;
+  });
+}
+
 function startRaidAutomation() {
   localStorage.setItem(RAID_AUTO_ACTIVE_KEY, '1');
   updateStatusBanner();
@@ -285,11 +366,13 @@ function initStatusBanner() {
     <div class="ds-status-line"><span>Nacht</span><strong data-field="nightStatus">-</strong></div>
     <div class="ds-status-line"><span>Status</span><strong data-field="botStatus">-</strong></div>
     <div class="ds-status-plan"><span>Plan</span><strong data-field="raidPlan">-</strong></div>
+    <div class="ds-status-plan"><span>Zielbild</span><strong data-field="nightPlan">-</strong></div>
     <div class="ds-status-actions">
       <button type="button" data-action="startRaidAuto">Start</button>
       <button type="button" data-action="stopRaidAuto">Stop</button>
     </div>
     <button type="button" class="ds-config-button" data-action="configureRaids">Konfig Raubzug</button>
+    <button type="button" class="ds-config-button" data-action="configureNightQueue">Zielbild bearbeiten</button>
   `;
 
   const style = document.createElement('style');
@@ -393,7 +476,8 @@ function initStatusBanner() {
     #ds-status-banner .ds-config-button:hover {
       background: #dfc184;
     }
-    #ds-raid-config-backdrop {
+    #ds-raid-config-backdrop,
+    #ds-night-config-backdrop {
       position: fixed;
       inset: 0;
       z-index: 100000;
@@ -404,7 +488,8 @@ function initStatusBanner() {
       color: #2f2417;
       font: 12px Arial, sans-serif;
     }
-    #ds-raid-config-modal {
+    #ds-raid-config-modal,
+    #ds-night-config-modal {
       width: min(760px, calc(100vw - 24px));
       max-height: calc(100vh - 24px);
       overflow: auto;
@@ -413,7 +498,9 @@ function initStatusBanner() {
       box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
     }
     #ds-raid-config-modal .ds-modal-head,
-    #ds-raid-config-modal .ds-modal-actions {
+    #ds-raid-config-modal .ds-modal-actions,
+    #ds-night-config-modal .ds-modal-head,
+    #ds-night-config-modal .ds-modal-actions {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -422,32 +509,39 @@ function initStatusBanner() {
       background: #e7d6ad;
       border-bottom: 1px solid #b69a68;
     }
-    #ds-raid-config-modal .ds-modal-title {
+    #ds-raid-config-modal .ds-modal-title,
+    #ds-night-config-modal .ds-modal-title {
       font-weight: bold;
       font-size: 13px;
       color: #5b2d14;
     }
-    #ds-raid-config-modal .ds-modal-body {
+    #ds-raid-config-modal .ds-modal-body,
+    #ds-night-config-modal .ds-modal-body {
       padding: 10px;
     }
-    #ds-raid-config-modal table {
+    #ds-raid-config-modal table,
+    #ds-night-config-modal table {
       width: 100%;
       border-collapse: collapse;
       background: #fffaf0;
     }
     #ds-raid-config-modal th,
-    #ds-raid-config-modal td {
+    #ds-raid-config-modal td,
+    #ds-night-config-modal th,
+    #ds-night-config-modal td {
       padding: 5px;
       border: 1px solid #c8b894;
       text-align: center;
       white-space: nowrap;
     }
-    #ds-raid-config-modal th {
+    #ds-raid-config-modal th,
+    #ds-night-config-modal th {
       background: #efe0bd;
       color: #5b2d14;
       font-weight: bold;
     }
-    #ds-raid-config-modal input[type="number"] {
+    #ds-raid-config-modal input[type="number"],
+    #ds-night-config-modal input[type="number"] {
       width: 58px;
       box-sizing: border-box;
       padding: 3px;
@@ -457,11 +551,22 @@ function initStatusBanner() {
       font: 12px Arial, sans-serif;
       text-align: right;
     }
-    #ds-raid-config-modal .ds-modal-actions {
+    #ds-night-config-modal select {
+      min-width: 180px;
+      box-sizing: border-box;
+      padding: 3px;
+      border: 1px solid #a58b5e;
+      background: #fff;
+      color: #2f2417;
+      font: 12px Arial, sans-serif;
+    }
+    #ds-raid-config-modal .ds-modal-actions,
+    #ds-night-config-modal .ds-modal-actions {
       border-top: 1px solid #b69a68;
       border-bottom: 0;
     }
-    #ds-raid-config-modal button {
+    #ds-raid-config-modal button,
+    #ds-night-config-modal button {
       padding: 4px 10px;
       border: 1px solid #8b6f47;
       background: #f4e4bc;
@@ -469,7 +574,8 @@ function initStatusBanner() {
       font: 12px Arial, sans-serif;
       cursor: pointer;
     }
-    #ds-raid-config-modal button:hover {
+    #ds-raid-config-modal button:hover,
+    #ds-night-config-modal button:hover {
       background: #e7cf94;
     }
   `;
@@ -479,8 +585,10 @@ function initStatusBanner() {
   banner.querySelector('[data-action="startRaidAuto"]').addEventListener('click', startRaidAutomation);
   banner.querySelector('[data-action="stopRaidAuto"]').addEventListener('click', stopRaidAutomation);
   banner.querySelector('[data-action="configureRaids"]').addEventListener('click', openRaidConfigModal);
+  banner.querySelector('[data-action="configureNightQueue"]').addEventListener('click', openNightQueueModal);
   updateStatusBanner();
   updateRaidPlanDisplays();
+  updateNightPlanDisplays();
   setInterval(updateStatusBanner, 1000);
 }
 
@@ -600,6 +708,143 @@ function openRaidConfigModal() {
   });
 }
 
+function closeNightQueueModal() {
+  document.getElementById('ds-night-config-backdrop')?.remove();
+}
+
+function buildNightBuildingOptions(selectedKey) {
+  return NIGHT_BUILDINGS.map(building => `
+    <option value="${building.key}" ${building.key === selectedKey ? 'selected' : ''}>${building.label}</option>
+  `).join('');
+}
+
+function buildNightQueueRows(queue) {
+  const normalized = normalizeNightQueue(queue);
+  return normalized.map((entry, index) => `
+    <tr data-night-row="1">
+      <td>${index + 1}</td>
+      <td>
+        <select data-night-building="1">
+          ${buildNightBuildingOptions(entry.building)}
+        </select>
+      </td>
+      <td>
+        <input type="number" min="1" step="1" data-night-level="1" value="${entry.level}">
+      </td>
+      <td>
+        <button type="button" data-action="moveNightRowUp" ${index === 0 ? 'disabled' : ''}>Hoch</button>
+        <button type="button" data-action="moveNightRowDown" ${index === normalized.length - 1 ? 'disabled' : ''}>Runter</button>
+        <button type="button" data-action="deleteNightRow">Loeschen</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function readNightQueueFromModal(modal) {
+  return Array.from(modal.querySelectorAll('[data-night-row="1"]'))
+    .map(row => ({
+      building: row.querySelector('[data-night-building="1"]')?.value,
+      level: row.querySelector('[data-night-level="1"]')?.value
+    }));
+}
+
+function renderNightQueueModalRows(modal, queue) {
+  const tbody = modal.querySelector('[data-night-rows="1"]');
+  if (!tbody) return;
+
+  const normalized = normalizeNightQueue(queue);
+  tbody.innerHTML = buildNightQueueRows(normalized);
+  modal.querySelector('[data-night-empty="1"]').style.display = normalized.length ? 'none' : 'block';
+}
+
+function openNightQueueModal() {
+  closeNightQueueModal();
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'ds-night-config-backdrop';
+  backdrop.innerHTML = `
+    <div id="ds-night-config-modal" role="dialog" aria-modal="true">
+      <div class="ds-modal-head">
+        <div class="ds-modal-title">Nacht-Zielbild</div>
+        <button type="button" data-action="closeNightQueue">Schliessen</button>
+      </div>
+      <div class="ds-modal-body">
+        <div data-night-empty="1" style="display: ${nightQueue.length ? 'none' : 'block'}; margin-bottom: 8px; color: #6f5635;">
+          Kein Zielbild gespeichert.
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Gebaeude</th>
+              <th>Ziellevel</th>
+              <th>Aktion</th>
+            </tr>
+          </thead>
+          <tbody data-night-rows="1">
+            ${buildNightQueueRows(nightQueue)}
+          </tbody>
+        </table>
+        <button type="button" data-action="addNightRow" style="margin-top: 8px;">Gebaeude hinzufuegen</button>
+      </div>
+      <div class="ds-modal-actions">
+        <button type="button" data-action="resetNightQueue">Zuruecksetzen</button>
+        <div>
+          <button type="button" data-action="cancelNightQueue">Abbrechen</button>
+          <button type="button" data-action="saveNightQueue">Speichern</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(backdrop);
+  const modal = backdrop.querySelector('#ds-night-config-modal');
+
+  const rerender = queue => renderNightQueueModalRows(modal, queue);
+  const currentQueue = () => readNightQueueFromModal(modal);
+
+  backdrop.addEventListener('click', event => {
+    if (event.target === backdrop) closeNightQueueModal();
+  });
+  modal.querySelector('[data-action="closeNightQueue"]').addEventListener('click', closeNightQueueModal);
+  modal.querySelector('[data-action="cancelNightQueue"]').addEventListener('click', closeNightQueueModal);
+  modal.querySelector('[data-action="saveNightQueue"]').addEventListener('click', () => {
+    savePersistentNightQueue(currentQueue());
+    closeNightQueueModal();
+  });
+  modal.querySelector('[data-action="resetNightQueue"]').addEventListener('click', () => {
+    resetPersistentNightQueue();
+    closeNightQueueModal();
+  });
+  modal.querySelector('[data-action="addNightRow"]').addEventListener('click', () => {
+    rerender([...currentQueue(), { building: NIGHT_BUILDINGS[0].key, level: 1 }]);
+  });
+  modal.addEventListener('click', event => {
+    const action = event.target?.dataset?.action;
+    if (!action) return;
+
+    const row = event.target.closest('[data-night-row="1"]');
+    if (!row) return;
+
+    const rows = Array.from(modal.querySelectorAll('[data-night-row="1"]'));
+    const index = rows.indexOf(row);
+    const queue = normalizeNightQueue(currentQueue());
+
+    if (action === 'deleteNightRow') {
+      queue.splice(index, 1);
+      rerender(queue);
+    }
+    if (action === 'moveNightRowUp' && index > 0) {
+      [queue[index - 1], queue[index]] = [queue[index], queue[index - 1]];
+      rerender(queue);
+    }
+    if (action === 'moveNightRowDown' && index < queue.length - 1) {
+      [queue[index + 1], queue[index]] = [queue[index], queue[index + 1]];
+      rerender(queue);
+    }
+  });
+}
+
 function setBannerField(name, value) {
   const node = document.querySelector(`#ds-status-banner [data-field="${name}"]`);
   if (node) node.textContent = value;
@@ -628,6 +873,7 @@ function updateStatusBanner() {
   setBannerField('raidSwitch', nextSwitchAt ? `${formatClock(nextSwitchAt)} (${formatDuration(nextSwitchAt - Date.now())})` : '-');
   setBannerField('nightStatus', getNightModeStatus());
   setBannerField('botStatus', BOT_PROTECTION_TRIGGERED ? 'erkannt' : 'ok');
+  updateNightPlanDisplays();
   updateRaidActionButtons();
 }
 
@@ -1231,6 +1477,7 @@ async function startNightBuilding() {
 (function () {
   'use strict';
   loadPersistentRaidConfig();
+  loadPersistentNightQueue();
   initStatusBanner();
   insertRaidPanel();
   scheduleRaidPageSwitch();
