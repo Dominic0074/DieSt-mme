@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.18
+// @version      1.19
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -716,6 +716,13 @@ async function handleRaidUnitPrefetch() {
   if (!isBarracksPage()) return false;
   if (BOT_PROTECTION_TRIGGERED) return true;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
+
+  if (isRecruitCooldownActive()) {
+    storeCurrentRaidUnitsFromRecruitPages();
+    localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
+    window.location.href = getScavengeUrl();
+    return true;
+  }
 
   storeCurrentRaidUnitsFromRecruitPages();
   await Sleep(random(RAID_CONFIG.preRaidReadDelayMin, RAID_CONFIG.preRaidReadDelayMax));
@@ -2649,14 +2656,15 @@ async function startNightBuilding() {
   loadPersistentRecruitConfig();
   loadPersistentNightQueue();
   storeCurrentRaidUnitsFromRecruitPages();
-  if (runBarracksAutoRecruitment()) return;
   storeCurrentNightLevelsFromMainPage();
   storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
   insertRaidPanel();
   scheduleRaidPageSwitch();
   handleRaidUnitPrefetch().then(prefetchHandled => {
-    if (!prefetchHandled && RAID_CONFIG.autoStart && isRaidAutomationActive() && isScavengePage()) {
+    if (prefetchHandled) return;
+    if (runBarracksAutoRecruitment()) return;
+    if (RAID_CONFIG.autoStart && isRaidAutomationActive() && isScavengePage()) {
       startScavengingRaids();
     }
   });
