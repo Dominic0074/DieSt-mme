@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.16
+// @version      1.18
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -1990,14 +1990,22 @@ function readAvailableRaidUnitsFromPage() {
     const fromTable = input ? readRaidUnitCountFromTable(input) : 0;
     const fromText = countNode ? parseTotalUnitCountText(countNode.textContent || '') : 0;
     const fromRecruitPage = readRecruitPageUnitTotal(unit);
-    const fromScavengeData = Number(
-      window.ScavengeScreen?.village?.unit_counts_home?.[unit] ||
-      window.ScavengingOverview?.village_data?.[getCurrentVillageId()]?.unit_counts_home?.[unit] ||
-      0
-    );
+    const fromScavengeData = readScavengeHomeUnitCount(unit);
     result[unit] = Math.max(fromRecruitPage || 0, fromInput || 0, fromTable || 0, fromText || 0, fromScavengeData || 0);
   });
   return result;
+}
+
+function readScavengeHomeUnitCount(unit) {
+  const villageId = getCurrentVillageId();
+  return Number(
+    window.ScavengeScreen?.village?.unit_counts_home?.[unit] ||
+    window.ScavengeScreen?.village_data?.unit_counts_home?.[unit] ||
+    window.ScavengeScreen?.village?.get?.('unit_counts_home')?.[unit] ||
+    window.ScavengingOverview?.village_data?.[villageId]?.unit_counts_home?.[unit] ||
+    window.game_data?.village?.unit_counts_home?.[unit] ||
+    0
+  );
 }
 
 function getRecruitUnitInput(unit) {
@@ -2089,6 +2097,14 @@ function readAvailableRaidUnits() {
   }
 
   return readStoredRaidUnits();
+}
+
+function readAvailableRaidUnitsForSending() {
+  const result = getEmptyRaidUnits();
+  RAID_UNITS.forEach(unit => {
+    result[unit] = Math.max(0, Math.floor(Number(readScavengeHomeUnitCount(unit) || 0)));
+  });
+  return result;
 }
 
 function setRaidInputValue(input, value) {
@@ -2394,12 +2410,8 @@ function calculateOptimizedRaidPlan(availableUnits, freeOptions) {
   return allocateRaidUnitsToCapacities(targetCapacities, usableUnits, activeIndexes);
 }
 
-function getRaidUnitsForOption(index, availableUnits, optimizedPlan) {
-  if (RAID_CONFIG.distributionMode === 'manual') return getConfiguredRaidUnits(index, availableUnits);
-
-  const units = optimizedPlan?.[index] || null;
-  if (!units || sumRaidUnits(units) < RAID_CONFIG.minUnitsPerRaid) return null;
-  return units;
+function getRaidUnitsForOption(index, availableUnits) {
+  return getConfiguredRaidUnits(index, availableUnits);
 }
 
 function applyRaidUnitsToOption(option, units) {
@@ -2485,16 +2497,19 @@ async function startScavengingRaids() {
     }
 
     let sent = 0;
-    const availableUnits = readAvailableRaidUnits();
-    const optimizedPlan = RAID_CONFIG.distributionMode === 'manual'
-      ? {}
-      : calculateOptimizedRaidPlan(availableUnits, options);
+    const availableUnits = readAvailableRaidUnitsForSending();
+    if (sumRaidUnits(availableUnits) === 0) {
+      setStatus('Keine zuhause verfuegbaren Truppen auf der Raubzugseite gefunden.');
+      storeNextRaidReadyAt();
+      await returnToBuildingsOverview();
+      return;
+    }
 
     for (let i = 0; i < options.length; i++) {
       if (BOT_PROTECTION_TRIGGERED) return;
 
       const { option, index } = options[i];
-      const raidUnits = getRaidUnitsForOption(index, availableUnits, optimizedPlan);
+      const raidUnits = getRaidUnitsForOption(index, availableUnits);
       if (!raidUnits) {
         setStatus(`Raubzug ${index}: zu wenig passende Truppen verfuegbar.`);
         continue;
