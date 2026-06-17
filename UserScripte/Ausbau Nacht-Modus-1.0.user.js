@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.11
+// @version      1.15
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
-// @match        https://*/game.php*
+// @match        https://*.die-staemme.de/game.php*
+// @match        https://die-staemme.de/game.php*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/Ausbau%20Nacht-Modus-1.0.user.js
 // @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/Ausbau%20Nacht-Modus-1.0.user.js
@@ -36,6 +37,8 @@ const RAID_CONFIG = {
   returnDelayMax: 4000,
   idleCheckDelayMin: 1200,
   idleCheckDelayMax: 2500,
+  preRaidReadDelayMin: 1200,
+  preRaidReadDelayMax: 2500,
   nextRaidBufferMin: 1500,
   nextRaidBufferMax: 6000,
   reserve: {
@@ -98,6 +101,16 @@ const RAID_CONFIG = {
     }
   }
 };
+const RECRUIT_CONFIG = {
+  enabled: true,
+  cooldownMs: 30000,
+  units: {
+    spear: 0,
+    sword: 0,
+    axe: 0,
+    archer: 0
+  }
+};
 let BOT_PROTECTION_TRIGGERED = false;
 let RAID_RUNNING = false;
 const STORAGE_KEY = 'ds_nacht_autostart';
@@ -105,8 +118,11 @@ const RAID_NEXT_READY_KEY = 'ds_raid_next_ready_at';
 const RAID_READY_TIMES_KEY = 'ds_raid_ready_times';
 const RAID_NEXT_SWITCH_KEY = 'ds_raid_next_switch_at';
 const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
+const RAID_PREFETCH_UNITS_KEY = 'ds_raid_prefetch_units_pending';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
 const RAID_STORED_UNITS_KEY = 'ds_raid_stored_units_v1';
+const RECRUIT_CONFIG_STORAGE_KEY = 'ds_recruit_config_v1';
+const RECRUIT_LAST_ACTION_KEY = 'ds_recruit_last_action_at';
 const NIGHT_QUEUE_STORAGE_KEY = 'ds_night_queue_v1';
 const NIGHT_CURRENT_LEVELS_STORAGE_KEY = 'ds_night_current_levels_v1';
 const NIGHT_UPGRADE_INFO_STORAGE_KEY = 'ds_night_upgrade_info_v1';
@@ -154,6 +170,7 @@ const RAID_RECRUIT_UNITS_BY_SCREEN = {
   barracks: ['spear', 'sword', 'axe', 'archer'],
   stable: ['light', 'marcher', 'heavy']
 };
+const BARRACKS_RECRUIT_UNITS = ['spear', 'sword', 'axe', 'archer'];
 const NIGHT_BUILDINGS = [
   { key: 'wood', label: 'Holzfaeller' },
   { key: 'stone', label: 'Lehmgrube' },
@@ -285,6 +302,53 @@ function resetPersistentRaidConfig() {
   localStorage.removeItem(RAID_CONFIG_STORAGE_KEY);
   applyRaidConfigSnapshot(getDefaultRaidConfigSnapshot());
   updateRaidPlanDisplays();
+}
+
+function normalizeRecruitConfig(config) {
+  const normalized = {
+    enabled: config?.enabled !== false,
+    units: {}
+  };
+
+  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+    normalized.units[unit] = Math.max(0, Math.floor(Number(config?.units?.[unit] || 0)));
+  });
+
+  return normalized;
+}
+
+function applyRecruitConfigSnapshot(snapshot) {
+  const normalized = normalizeRecruitConfig(snapshot);
+  RECRUIT_CONFIG.enabled = normalized.enabled;
+  RECRUIT_CONFIG.units = normalized.units;
+}
+
+function getRecruitConfigSnapshot() {
+  return normalizeRecruitConfig(RECRUIT_CONFIG);
+}
+
+function loadPersistentRecruitConfig() {
+  try {
+    const raw = localStorage.getItem(RECRUIT_CONFIG_STORAGE_KEY);
+    if (!raw) return;
+    applyRecruitConfigSnapshot(JSON.parse(raw));
+  } catch (e) {
+    console.warn('Rekrutierungs-Konfiguration konnte nicht geladen werden:', e);
+  }
+}
+
+function savePersistentRecruitConfig(snapshot) {
+  const normalized = normalizeRecruitConfig(snapshot);
+  localStorage.setItem(RECRUIT_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
+  applyRecruitConfigSnapshot(normalized);
+}
+
+function resetPersistentRecruitConfig() {
+  localStorage.removeItem(RECRUIT_CONFIG_STORAGE_KEY);
+  applyRecruitConfigSnapshot({
+    enabled: true,
+    units: {}
+  });
 }
 
 function normalizeNightQueue(queue) {
@@ -626,22 +690,43 @@ function storeCurrentNightLevelsFromBuildingsOverview() {
 
 function startRaidAutomation() {
   localStorage.setItem(RAID_AUTO_ACTIVE_KEY, '1');
+  localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
   updateStatusBanner();
 
-  if (!isScavengePage()) {
-    window.location.href = getScavengeUrl();
+  if (!isBarracksPage()) {
+    window.location.href = getBarracksUrl();
     return;
   }
 
-  startScavengingRaids();
+  handleRaidUnitPrefetch();
 }
 
 function stopRaidAutomation() {
   localStorage.removeItem(RAID_AUTO_ACTIVE_KEY);
+  localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
   localStorage.removeItem(RAID_NEXT_READY_KEY);
   localStorage.removeItem(RAID_READY_TIMES_KEY);
   localStorage.removeItem(RAID_NEXT_SWITCH_KEY);
   updateStatusBanner();
+}
+
+async function handleRaidUnitPrefetch() {
+  if (!isRaidAutomationActive()) return false;
+  if (localStorage.getItem(RAID_PREFETCH_UNITS_KEY) !== '1') return false;
+  if (!isBarracksPage()) return false;
+  if (BOT_PROTECTION_TRIGGERED) return true;
+  if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
+
+  storeCurrentRaidUnitsFromRecruitPages();
+  await Sleep(random(RAID_CONFIG.preRaidReadDelayMin, RAID_CONFIG.preRaidReadDelayMax));
+  if (BOT_PROTECTION_TRIGGERED) return true;
+  if (!isRaidAutomationActive()) return true;
+  if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
+
+  storeCurrentRaidUnitsFromRecruitPages();
+  localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
+  window.location.href = getScavengeUrl();
+  return true;
 }
 
 function initStatusBanner() {
@@ -664,6 +749,7 @@ function initStatusBanner() {
       <button type="button" data-action="stopRaidAuto">Stop</button>
     </div>
     <button type="button" class="ds-config-button" data-action="configureRaids">Konfig Raubzug</button>
+    <button type="button" class="ds-config-button" data-action="configureRecruitment">Konfig Rekrutierung</button>
     <button type="button" class="ds-config-button" data-action="configureNightQueue">Zielbild bearbeiten</button>
   `;
 
@@ -769,6 +855,7 @@ function initStatusBanner() {
       background: #dfc184;
     }
     #ds-raid-config-backdrop,
+    #ds-recruit-config-backdrop,
     #ds-night-config-backdrop {
       position: fixed;
       inset: 0;
@@ -781,6 +868,7 @@ function initStatusBanner() {
       font: 12px Arial, sans-serif;
     }
     #ds-raid-config-modal,
+    #ds-recruit-config-modal,
     #ds-night-config-modal {
       width: min(760px, calc(100vw - 24px));
       max-height: calc(100vh - 24px);
@@ -791,6 +879,8 @@ function initStatusBanner() {
     }
     #ds-raid-config-modal .ds-modal-head,
     #ds-raid-config-modal .ds-modal-actions,
+    #ds-recruit-config-modal .ds-modal-head,
+    #ds-recruit-config-modal .ds-modal-actions,
     #ds-night-config-modal .ds-modal-head,
     #ds-night-config-modal .ds-modal-actions {
       display: flex;
@@ -802,12 +892,14 @@ function initStatusBanner() {
       border-bottom: 1px solid #b69a68;
     }
     #ds-raid-config-modal .ds-modal-title,
+    #ds-recruit-config-modal .ds-modal-title,
     #ds-night-config-modal .ds-modal-title {
       font-weight: bold;
       font-size: 13px;
       color: #5b2d14;
     }
     #ds-raid-config-modal .ds-modal-body,
+    #ds-recruit-config-modal .ds-modal-body,
     #ds-night-config-modal .ds-modal-body {
       padding: 10px;
     }
@@ -869,6 +961,7 @@ function initStatusBanner() {
       font-style: italic;
     }
     #ds-raid-config-modal table,
+    #ds-recruit-config-modal table,
     #ds-night-config-modal table {
       width: 100%;
       border-collapse: collapse;
@@ -876,6 +969,8 @@ function initStatusBanner() {
     }
     #ds-raid-config-modal th,
     #ds-raid-config-modal td,
+    #ds-recruit-config-modal th,
+    #ds-recruit-config-modal td,
     #ds-night-config-modal th,
     #ds-night-config-modal td {
       padding: 5px;
@@ -884,12 +979,14 @@ function initStatusBanner() {
       white-space: nowrap;
     }
     #ds-raid-config-modal th,
+    #ds-recruit-config-modal th,
     #ds-night-config-modal th {
       background: #efe0bd;
       color: #5b2d14;
       font-weight: bold;
     }
     #ds-raid-config-modal input[type="number"],
+    #ds-recruit-config-modal input[type="number"],
     #ds-night-config-modal input[type="number"] {
       width: 58px;
       box-sizing: border-box;
@@ -910,11 +1007,13 @@ function initStatusBanner() {
       font: 12px Arial, sans-serif;
     }
     #ds-raid-config-modal .ds-modal-actions,
+    #ds-recruit-config-modal .ds-modal-actions,
     #ds-night-config-modal .ds-modal-actions {
       border-top: 1px solid #b69a68;
       border-bottom: 0;
     }
     #ds-raid-config-modal button,
+    #ds-recruit-config-modal button,
     #ds-night-config-modal button {
       padding: 4px 10px;
       border: 1px solid #8b6f47;
@@ -924,6 +1023,7 @@ function initStatusBanner() {
       cursor: pointer;
     }
     #ds-raid-config-modal button:hover,
+    #ds-recruit-config-modal button:hover,
     #ds-night-config-modal button:hover {
       background: #e7cf94;
     }
@@ -934,6 +1034,7 @@ function initStatusBanner() {
   banner.querySelector('[data-action="startRaidAuto"]').addEventListener('click', startRaidAutomation);
   banner.querySelector('[data-action="stopRaidAuto"]').addEventListener('click', stopRaidAutomation);
   banner.querySelector('[data-action="configureRaids"]').addEventListener('click', openRaidConfigModal);
+  banner.querySelector('[data-action="configureRecruitment"]').addEventListener('click', openRecruitConfigModal);
   banner.querySelector('[data-action="configureNightQueue"]').addEventListener('click', openNightQueueModal);
   updateStatusBanner();
   updateRaidPlanDisplays();
@@ -1256,6 +1357,95 @@ function openRaidConfigModal() {
   updatePreview();
 }
 
+function closeRecruitConfigModal() {
+  document.getElementById('ds-recruit-config-backdrop')?.remove();
+}
+
+function buildRecruitConfigRows() {
+  return BARRACKS_RECRUIT_UNITS.map(unit => `
+    <tr>
+      <th>${RAID_UNIT_LABELS[unit] || unit}</th>
+      <td>
+        <input type="number" min="0" step="1" data-recruit-unit="${unit}" value="${Number(RECRUIT_CONFIG.units?.[unit] || 0)}">
+      </td>
+    </tr>
+  `).join('');
+}
+
+function readRecruitConfigFromModal(modal) {
+  const snapshot = {
+    enabled: Boolean(modal.querySelector('[data-recruit-enabled="1"]')?.checked),
+    units: {}
+  };
+
+  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+    const input = modal.querySelector(`[data-recruit-unit="${unit}"]`);
+    snapshot.units[unit] = Math.max(0, Math.floor(Number(input?.value || 0)));
+  });
+
+  return snapshot;
+}
+
+function openRecruitConfigModal() {
+  closeRecruitConfigModal();
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'ds-recruit-config-backdrop';
+  backdrop.innerHTML = `
+    <div id="ds-recruit-config-modal" role="dialog" aria-modal="true">
+      <div class="ds-modal-head">
+        <div class="ds-modal-title">Rekrutierung-Konfiguration</div>
+        <button type="button" data-action="closeRecruitConfig">Schliessen</button>
+      </div>
+      <div class="ds-modal-body">
+        <table>
+          <thead>
+            <tr>
+              <th colspan="2">
+                <label>
+                  <input type="checkbox" data-recruit-enabled="1" ${RECRUIT_CONFIG.enabled !== false ? 'checked' : ''}>
+                  Automatisch in der Kaserne rekrutieren
+                </label>
+              </th>
+            </tr>
+            <tr>
+              <th>Einheit</th>
+              <th>Menge pro Besuch</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${buildRecruitConfigRows()}
+          </tbody>
+        </table>
+      </div>
+      <div class="ds-modal-actions">
+        <button type="button" data-action="resetRecruitConfig">Zuruecksetzen</button>
+        <div>
+          <button type="button" data-action="cancelRecruitConfig">Abbrechen</button>
+          <button type="button" data-action="saveRecruitConfig">Speichern</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(backdrop);
+  const modal = backdrop.querySelector('#ds-recruit-config-modal');
+
+  backdrop.addEventListener('click', event => {
+    if (event.target === backdrop) closeRecruitConfigModal();
+  });
+  modal.querySelector('[data-action="closeRecruitConfig"]').addEventListener('click', closeRecruitConfigModal);
+  modal.querySelector('[data-action="cancelRecruitConfig"]').addEventListener('click', closeRecruitConfigModal);
+  modal.querySelector('[data-action="saveRecruitConfig"]').addEventListener('click', () => {
+    savePersistentRecruitConfig(readRecruitConfigFromModal(modal));
+    closeRecruitConfigModal();
+  });
+  modal.querySelector('[data-action="resetRecruitConfig"]').addEventListener('click', () => {
+    resetPersistentRecruitConfig();
+    closeRecruitConfigModal();
+  });
+}
+
 function closeNightQueueModal() {
   document.getElementById('ds-night-config-backdrop')?.remove();
 }
@@ -1477,17 +1667,26 @@ function isRecruitPage() {
   return ['barracks', 'stable'].includes(getCurrentScreen());
 }
 
+function isBarracksPage() {
+  return getCurrentScreen() === 'barracks';
+}
+
 function buildGameUrl(screen, mode) {
   const params = new URLSearchParams(location.search);
   const villageId = getCurrentVillageId();
   if (villageId) params.set('village', villageId);
   params.set('screen', screen);
   if (mode) params.set('mode', mode);
+  else params.delete('mode');
   return `${location.origin}${location.pathname}?${params.toString()}`;
 }
 
 function getBuildingsUrl() {
   return buildGameUrl('overview_villages', 'buildings');
+}
+
+function getBarracksUrl() {
+  return buildGameUrl('barracks');
 }
 
 function getScavengeUrl() {
@@ -1633,7 +1832,8 @@ function scheduleRaidPageSwitch() {
     localStorage.removeItem(RAID_NEXT_READY_KEY);
     localStorage.removeItem(RAID_READY_TIMES_KEY);
     localStorage.removeItem(RAID_NEXT_SWITCH_KEY);
-    window.location.href = getScavengeUrl();
+    localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
+    window.location.href = getBarracksUrl();
   }, waitMs);
 }
 
@@ -1798,6 +1998,69 @@ function readAvailableRaidUnitsFromPage() {
     result[unit] = Math.max(fromRecruitPage || 0, fromInput || 0, fromTable || 0, fromText || 0, fromScavengeData || 0);
   });
   return result;
+}
+
+function getRecruitUnitInput(unit) {
+  return document.querySelector(`#train_form input[name="${unit}"], #train_form input[data-unit="${unit}"]`);
+}
+
+function getRecruitAffordableCount(unit) {
+  const row = getRecruitUnitRow(unit);
+  const maxLink = row?.querySelector(`#${unit}_0_a, a[href*="set_max('${unit}')"], a[href*='set_max("${unit}")']`);
+  const match = (maxLink?.textContent || '').match(/\((\d+)\)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function isRecruitCooldownActive() {
+  const lastActionAt = Number(localStorage.getItem(RECRUIT_LAST_ACTION_KEY) || 0);
+  return Number.isFinite(lastActionAt) && Date.now() - lastActionAt < RECRUIT_CONFIG.cooldownMs;
+}
+
+function setRecruitInputValue(input, value) {
+  input.value = String(value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+}
+
+function runBarracksAutoRecruitment() {
+  if (!RECRUIT_CONFIG.enabled || !isBarracksPage()) return false;
+  if (isRecruitCooldownActive()) return false;
+  if (BOT_PROTECTION_TRIGGERED) return false;
+  if (isBotProtectionActive()) { triggerBotProtectionStop(); return false; }
+
+  const form = document.querySelector('#train_form');
+  if (!form) return false;
+
+  let totalQueued = 0;
+
+  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+    const input = getRecruitUnitInput(unit);
+    if (input) setRecruitInputValue(input, 0);
+  });
+
+  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+    const requested = Math.max(0, Math.floor(Number(RECRUIT_CONFIG.units?.[unit] || 0)));
+    if (requested <= 0) return;
+
+    const input = getRecruitUnitInput(unit);
+    if (!input) return;
+
+    const affordable = getRecruitAffordableCount(unit);
+    if (affordable < requested) return;
+
+    setRecruitInputValue(input, requested);
+    totalQueued += requested;
+  });
+
+  if (totalQueued <= 0) return false;
+
+  localStorage.setItem(RECRUIT_LAST_ACTION_KEY, String(Date.now()));
+  const submit = form.querySelector('input[type="submit"], button[type="submit"], .btn-recruit');
+  if (submit) submit.click();
+  else form.submit();
+
+  return true;
 }
 
 function storeCurrentRaidUnitsFromRecruitPages() {
@@ -2367,13 +2630,19 @@ async function startNightBuilding() {
 (function () {
   'use strict';
   loadPersistentRaidConfig();
+  loadPersistentRecruitConfig();
   loadPersistentNightQueue();
+  if (runBarracksAutoRecruitment()) return;
   storeCurrentRaidUnitsFromRecruitPages();
   storeCurrentNightLevelsFromMainPage();
   storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
   insertRaidPanel();
   scheduleRaidPageSwitch();
-  if (RAID_CONFIG.autoStart && isRaidAutomationActive()) startScavengingRaids();
+  handleRaidUnitPrefetch().then(prefetchHandled => {
+    if (!prefetchHandled && RAID_CONFIG.autoStart && isRaidAutomationActive() && isScavengePage()) {
+      startScavengingRaids();
+    }
+  });
   startNightBuilding();
 })();
