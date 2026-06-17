@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -10,49 +10,14 @@
 // @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/Ausbau%20Nacht-Modus-1.0.user.js
 // ==/UserScript==
 
-// ═══════════════════════════════════════════════════════════════
-//  NACHT-WARTESCHLANGE – hier eintragen was gebaut werden soll
-//
-//  Einfach die gewünschten Zeilen nach unten in die Queue kopieren
-//  und das Ziellevel anpassen. Das Skript stoppt wenn alles fertig ist.
-//
-//  ALLE VERFÜGBAREN GEBÄUDE ZUM KOPIEREN:
-//
-//  ── Rohstoffe ──────────────────────────────────────────────────
-//  { building: 'wood',     level: X },  // Holzfäller
-//  { building: 'stone',    level: X },  // Lehmgrube
-//  { building: 'iron',     level: X },  // Eisenmine
-//
-//  ── Basis ──────────────────────────────────────────────────────
-//  { building: 'main',     level: X },  // Hauptgebäude
-//  { building: 'storage',  level: X },  // Speicher
-//  { building: 'farm',     level: X },  // Bauernhof
-//  { building: 'place',    level: X },  // Versammlungsplatz
-//  { building: 'hide',     level: X },  // Versteck
-//
-//  ── Militär ────────────────────────────────────────────────────
-//  { building: 'barracks', level: X },  // Kaserne
-//  { building: 'stable',   level: X },  // Stall
-//  { building: 'garage',   level: X },  // Werkstatt
-//  { building: 'smith',    level: X },  // Schmiede
-//  { building: 'market',   level: X },  // Marktplatz
-//  { building: 'wall',     level: X },  // Wall
-//  { building: 'snob',     level: X },  // Adelshof
-// ═══════════════════════════════════════════════════════════════
-const nightQueue = [
-  // ── Hier deine Nacht-Liste eintragen ──
-];
-// ═══════════════════════════════════════════════════════════════
+const nightQueue = [];
 
-// ── Konfiguration ──────────────────────────────────────────────
 const CLICK_DELAY_MIN  = 3000;  // Mindestwartezeit zwischen Klicks (ms)
 const CLICK_DELAY_MAX  = 5000;  // Maximalwartezeit zwischen Klicks (ms)
 const RELOAD_WAIT_MIN  = 2 * 60 * 1000;  // Mindestwartezeit zwischen Prüfungen (ms)
 const RELOAD_WAIT_MAX  = 2 * 60 * 1000 + 30 * 1000;  // Maximalwartezeit (ms)
 const ALERT_SOUND_ENABLED = true;
 
-// Raubzuege: Pro Slot eintragen, welche Truppen geschickt werden sollen.
-// Option 1-4 entspricht den vier Raubzug-Optionen im Spiel.
 const RAID_CONFIG = {
   enabled: true,
   autoStart: true,
@@ -130,8 +95,6 @@ const RAID_CONFIG = {
     }
   }
 };
-// ──────────────────────────────────────────────────────────────
-
 let BOT_PROTECTION_TRIGGERED = false;
 let RAID_RUNNING = false;
 const STORAGE_KEY = 'ds_nacht_autostart';
@@ -172,7 +135,6 @@ const NIGHT_BUILDINGS = [
 ];
 const NIGHT_BUILDING_KEYS = NIGHT_BUILDINGS.map(building => building.key);
 const RAID_DEFAULT_CONFIG = JSON.parse(JSON.stringify(RAID_CONFIG));
-const DEFAULT_NIGHT_QUEUE = JSON.parse(JSON.stringify(nightQueue));
 
 function Sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -481,7 +443,7 @@ function readCurrentNightLevelsFromMainPage() {
   const levels = {};
   const content = document.querySelector('#content_value') || document;
 
-  NIGHT_BUILDINGS.forEach(({ key, label }) => {
+  NIGHT_BUILDINGS.forEach(({ key }) => {
     const selectors = [
       `#main_buildrow_${key}`,
       `#main_buildlink_${key}`,
@@ -1129,7 +1091,6 @@ function updateStatusBanner() {
   updateRaidActionButtons();
 }
 
-// ── Alarm-Ton ─────────────────────────────────────────────────
 function playAlertSound() {
   if (!ALERT_SOUND_ENABLED) return;
   try {
@@ -1154,7 +1115,6 @@ function playAlertSound() {
   }
 }
 
-// ── Bot-Schutz erkennen ────────────────────────────────────────
 function isBotProtectionActive() {
   if (document.querySelector('#captcha, .captcha, img[src*="captcha"], img[src*="botcheck"]')) return true;
   const botProtection = document.querySelector('#botprotection_quest');
@@ -1167,7 +1127,6 @@ function isBotProtectionActive() {
   return false;
 }
 
-// ── Bot-Schutz auslösen ────────────────────────────────────────
 function triggerBotProtectionStop() {
   if (BOT_PROTECTION_TRIGGERED) return;
   BOT_PROTECTION_TRIGGERED = true;
@@ -1180,7 +1139,6 @@ function triggerBotProtectionStop() {
   );
 }
 
-// ── Hintergrund-Überwachung ────────────────────────────────────
 function startBotProtectionWatcher() {
   const interval = setInterval(() => {
     if (BOT_PROTECTION_TRIGGERED) { clearInterval(interval); return; }
@@ -1627,15 +1585,12 @@ async function startScavengingRaids() {
   }
 }
 
-// ── Hauptfunktion ──────────────────────────────────────────────
 async function startNightBuilding() {
 
   if (!location.href.includes('screen=overview_villages') || !location.href.includes('mode=buildings')) return;
 
-  // Sofort-Check
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return; }
 
-  // Queue leer?
   if (!nightQueue || nightQueue.length === 0) {
     console.log('%c✅ Nacht-Warteschlange ist leer – nichts zu tun.', 'color: gray');
     return;
@@ -1659,7 +1614,7 @@ async function startNightBuilding() {
 
   let table = document.getElementById('villages');
   let rows = table.querySelectorAll(':scope > tr');
-  let queueFinished = true; // Wird false wenn noch was zu bauen ist
+  let queueFinished = true;
 
   for (let i = 0; i < rows.length; i++) {
     if (BOT_PROTECTION_TRIGGERED) return;
@@ -1680,7 +1635,6 @@ async function startNightBuilding() {
 
       let currentLevel = +cell.textContent;
 
-      // Bereits in der Bau-Warteschlange berücksichtigen
       let queueIcons = lastCell.querySelectorAll('.queue_icon');
       for (let y = 0; y < queueIcons.length; y++) {
         let img = queueIcons[y].firstElementChild;
@@ -1689,7 +1643,6 @@ async function startNightBuilding() {
 
       if (currentLevel >= targetLevel) continue;
 
-      // Noch was zu bauen → Queue noch nicht fertig
       queueFinished = false;
 
       let btn = cell.querySelector(':scope > a');
@@ -1707,7 +1660,6 @@ async function startNightBuilding() {
   if (BOT_PROTECTION_TRIGGERED) return;
 
   if (queueFinished) {
-    // Alles fertig gebaut – stoppen
     console.log(
       '%c✅ Nacht-Warteschlange vollständig abgearbeitet – Skript stoppt.',
       'color: #4CAF50; font-size: 14px; font-weight: bold'
@@ -1716,7 +1668,6 @@ async function startNightBuilding() {
     return;
   }
 
-  // Noch nicht fertig → warten und Seite neu laden
   const waitMs = random(RELOAD_WAIT_MIN, RELOAD_WAIT_MAX);
   const nextRun = new Date(Date.now() + waitMs).toLocaleTimeString('de-DE');
   console.log(`⏳ Nächste Prüfung um ${nextRun} – warte ${Math.round(waitMs / 1000)} Sekunden …`);
