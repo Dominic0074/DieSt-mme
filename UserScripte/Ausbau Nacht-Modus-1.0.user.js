@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.15
+// @version      1.16
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -2031,6 +2031,7 @@ function runBarracksAutoRecruitment() {
 
   const form = document.querySelector('#train_form');
   if (!form) return false;
+  storeCurrentRaidUnitsFromRecruitPages();
 
   let totalQueued = 0;
 
@@ -2632,8 +2633,8 @@ async function startNightBuilding() {
   loadPersistentRaidConfig();
   loadPersistentRecruitConfig();
   loadPersistentNightQueue();
-  if (runBarracksAutoRecruitment()) return;
   storeCurrentRaidUnitsFromRecruitPages();
+  if (runBarracksAutoRecruitment()) return;
   storeCurrentNightLevelsFromMainPage();
   storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
