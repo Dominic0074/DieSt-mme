@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -293,7 +293,11 @@ function applyNightQueueSnapshot(snapshot) {
 }
 
 function getDefaultNightQueueSnapshot() {
-  return normalizeNightQueue(DEFAULT_NIGHT_QUEUE);
+  const currentLevels = readStoredNightCurrentLevels();
+  return NIGHT_BUILDINGS.map(building => ({
+    building: building.key,
+    level: Math.max(1, Number(currentLevels[building.key] || 1))
+  }));
 }
 
 function loadPersistentNightQueue() {
@@ -307,7 +311,12 @@ function loadPersistentNightQueue() {
 }
 
 function savePersistentNightQueue(snapshot) {
-  const normalized = normalizeNightQueue(snapshot);
+  const currentLevels = readStoredNightCurrentLevels();
+  const normalized = normalizeNightQueue(snapshot)
+    .map(entry => ({
+      building: entry.building,
+      level: Math.max(entry.level, Number(currentLevels[entry.building] || 1))
+    }));
   localStorage.setItem(NIGHT_QUEUE_STORAGE_KEY, JSON.stringify(normalized));
   applyNightQueueSnapshot(normalized);
   updateNightPlanDisplays();
@@ -811,50 +820,38 @@ function closeNightQueueModal() {
   document.getElementById('ds-night-config-backdrop')?.remove();
 }
 
-function buildNightBuildingOptions(selectedKey) {
-  return NIGHT_BUILDINGS.map(building => `
-    <option value="${building.key}" ${building.key === selectedKey ? 'selected' : ''}>${building.label}</option>
-  `).join('');
+function getNightTargetLevel(buildingKey) {
+  const entry = nightQueue.find(item => item.building === buildingKey);
+  const currentLevel = Number(getStoredNightCurrentLevel(buildingKey));
+  const minimumLevel = Number.isFinite(currentLevel) && currentLevel > 0 ? currentLevel : 1;
+  return Math.max(Number(entry?.level || 0), minimumLevel);
 }
 
-function buildNightQueueRows(queue) {
-  const normalized = normalizeNightQueue(queue);
-  return normalized.map((entry, index) => `
+function buildNightQueueRows() {
+  return NIGHT_BUILDINGS.map((building, index) => {
+    const currentLevel = getStoredNightCurrentLevel(building.key);
+    const minimumLevel = Number(currentLevel) > 0 ? Number(currentLevel) : 1;
+    const targetLevel = getNightTargetLevel(building.key);
+
+    return `
     <tr data-night-row="1">
       <td>${index + 1}</td>
+      <td>${building.label}</td>
+      <td data-night-current-level="1">${currentLevel}</td>
       <td>
-        <select data-night-building="1">
-          ${buildNightBuildingOptions(entry.building)}
-        </select>
-      </td>
-      <td data-night-current-level="1">${getStoredNightCurrentLevel(entry.building)}</td>
-      <td>
-        <input type="number" min="1" step="1" data-night-level="1" value="${entry.level}">
-      </td>
-      <td>
-        <button type="button" data-action="moveNightRowUp" ${index === 0 ? 'disabled' : ''}>Hoch</button>
-        <button type="button" data-action="moveNightRowDown" ${index === normalized.length - 1 ? 'disabled' : ''}>Runter</button>
-        <button type="button" data-action="deleteNightRow">Loeschen</button>
+        <input type="number" min="${minimumLevel}" step="1" data-night-building="${building.key}" data-night-level="1" value="${targetLevel}">
       </td>
     </tr>
-  `).join('');
+    `;
+  }).join('');
 }
 
 function readNightQueueFromModal(modal) {
   return Array.from(modal.querySelectorAll('[data-night-row="1"]'))
     .map(row => ({
-      building: row.querySelector('[data-night-building="1"]')?.value,
+      building: row.querySelector('[data-night-building][data-night-level="1"]')?.dataset?.nightBuilding,
       level: row.querySelector('[data-night-level="1"]')?.value
     }));
-}
-
-function renderNightQueueModalRows(modal, queue) {
-  const tbody = modal.querySelector('[data-night-rows="1"]');
-  if (!tbody) return;
-
-  const normalized = normalizeNightQueue(queue);
-  tbody.innerHTML = buildNightQueueRows(normalized);
-  modal.querySelector('[data-night-empty="1"]').style.display = normalized.length ? 'none' : 'block';
 }
 
 function openNightQueueModal() {
@@ -869,9 +866,6 @@ function openNightQueueModal() {
         <button type="button" data-action="closeNightQueue">Schliessen</button>
       </div>
       <div class="ds-modal-body">
-        <div data-night-empty="1" style="display: ${nightQueue.length ? 'none' : 'block'}; margin-bottom: 8px; color: #6f5635;">
-          Kein Zielbild gespeichert.
-        </div>
         <table>
           <thead>
             <tr>
@@ -879,14 +873,12 @@ function openNightQueueModal() {
               <th>Gebaeude</th>
               <th>Aktuell</th>
               <th>Ziellevel</th>
-              <th>Aktion</th>
             </tr>
           </thead>
           <tbody data-night-rows="1">
-            ${buildNightQueueRows(nightQueue)}
+            ${buildNightQueueRows()}
           </tbody>
         </table>
-        <button type="button" data-action="addNightRow" style="margin-top: 8px;">Gebaeude hinzufuegen</button>
       </div>
       <div class="ds-modal-actions">
         <button type="button" data-action="resetNightQueue">Zuruecksetzen</button>
@@ -901,7 +893,6 @@ function openNightQueueModal() {
   document.body.appendChild(backdrop);
   const modal = backdrop.querySelector('#ds-night-config-modal');
 
-  const rerender = queue => renderNightQueueModalRows(modal, queue);
   const currentQueue = () => readNightQueueFromModal(modal);
 
   backdrop.addEventListener('click', event => {
@@ -917,40 +908,15 @@ function openNightQueueModal() {
     resetPersistentNightQueue();
     closeNightQueueModal();
   });
-  modal.querySelector('[data-action="addNightRow"]').addEventListener('click', () => {
-    rerender([...currentQueue(), { building: NIGHT_BUILDINGS[0].key, level: 1 }]);
-  });
-  modal.addEventListener('click', event => {
-    const action = event.target?.dataset?.action;
-    if (!action) return;
+  const enforceMinimumTargetLevel = event => {
+    if (!event.target?.matches?.('[data-night-level="1"]')) return;
 
-    const row = event.target.closest('[data-night-row="1"]');
-    if (!row) return;
-
-    const rows = Array.from(modal.querySelectorAll('[data-night-row="1"]'));
-    const index = rows.indexOf(row);
-    const queue = normalizeNightQueue(currentQueue());
-
-    if (action === 'deleteNightRow') {
-      queue.splice(index, 1);
-      rerender(queue);
-    }
-    if (action === 'moveNightRowUp' && index > 0) {
-      [queue[index - 1], queue[index]] = [queue[index], queue[index - 1]];
-      rerender(queue);
-    }
-    if (action === 'moveNightRowDown' && index < queue.length - 1) {
-      [queue[index + 1], queue[index]] = [queue[index], queue[index + 1]];
-      rerender(queue);
-    }
-  });
-  modal.addEventListener('change', event => {
-    if (!event.target?.matches?.('[data-night-building="1"]')) return;
-
-    const row = event.target.closest('[data-night-row="1"]');
-    const currentCell = row?.querySelector('[data-night-current-level="1"]');
-    if (currentCell) currentCell.textContent = getStoredNightCurrentLevel(event.target.value);
-  });
+    const minimumLevel = Number(event.target.min || 1);
+    const targetLevel = Math.max(minimumLevel, Math.floor(Number(event.target.value || minimumLevel)));
+    event.target.value = String(targetLevel);
+  };
+  modal.addEventListener('input', enforceMinimumTargetLevel);
+  modal.addEventListener('change', enforceMinimumTargetLevel);
 }
 
 function setBannerField(name, value) {
