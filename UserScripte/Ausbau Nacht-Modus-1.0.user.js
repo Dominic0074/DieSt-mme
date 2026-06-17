@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.9
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -1700,22 +1700,11 @@ function parseTotalUnitCountText(text) {
 }
 
 function getRecruitUnitRow(unit) {
-  const labels = RAID_UNIT_SEARCH_LABELS[unit] || [RAID_UNIT_LABELS[unit] || unit];
-  const rows = Array.from(document.querySelectorAll('tr'));
+  const trainForm = document.querySelector('#train_form');
+  if (!trainForm) return null;
 
-  return rows.find(row => {
-    const text = row.textContent || '';
-    const hasLabel = labels.some(label => text.includes(label));
-    const hasUnitMarker = Boolean(row.querySelector(
-      `.unit_link[data-unit="${unit}"],` +
-      `.unit-item-${unit},` +
-      `[data-unit="${unit}"],` +
-      `[class*="unit-${unit}"],` +
-      `img[src*="${unit}"]`
-    ));
-
-    return hasLabel || hasUnitMarker;
-  }) || null;
+  const unitLink = trainForm.querySelector(`a.unit_link[data-unit="${unit}"]`);
+  return unitLink?.closest('tr') || null;
 }
 
 function readRecruitPageUnitTotal(unit) {
@@ -1724,11 +1713,21 @@ function readRecruitPageUnitTotal(unit) {
   const row = getRecruitUnitRow(unit);
   if (!row) return 0;
 
-  const slashCell = Array.from(row.children)
-    .map(cell => cell.textContent || '')
-    .find(text => /\d+\s*\/\s*\d+/.test(text));
+  const countCell = Array.from(row.children)
+    .find(cell => /^\s*\d[\d.]*\s*\/\s*\d[\d.]*\s*$/.test(cell.textContent || ''));
 
-  return parseTotalUnitCountText(slashCell || '');
+  return countCell ? parseTotalUnitCountText(countCell.textContent || '') : 0;
+}
+
+function readAvailableRaidUnitsFromRecruitPage() {
+  const result = getEmptyRaidUnits();
+  if (!isRecruitPage()) return result;
+
+  RAID_UNITS.forEach(unit => {
+    result[unit] = readRecruitPageUnitTotal(unit);
+  });
+
+  return result;
 }
 
 function getEmptyRaidUnits() {
@@ -1762,6 +1761,8 @@ function saveStoredRaidUnits(units) {
 }
 
 function readAvailableRaidUnitsFromPage() {
+  if (isRecruitPage()) return readAvailableRaidUnitsFromRecruitPage();
+
   const result = {};
   const unitInputs = getRaidUnitInputs();
   RAID_UNITS.forEach(unit => {
