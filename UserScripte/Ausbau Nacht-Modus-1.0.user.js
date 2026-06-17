@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -142,6 +142,7 @@ const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
 const NIGHT_QUEUE_STORAGE_KEY = 'ds_night_queue_v1';
 const NIGHT_CURRENT_LEVELS_STORAGE_KEY = 'ds_night_current_levels_v1';
+const NIGHT_UPGRADE_INFO_STORAGE_KEY = 'ds_night_upgrade_info_v1';
 const RAID_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy'];
 const RAID_UNIT_LABELS = {
   spear: 'Speer',
@@ -368,7 +369,7 @@ function readStoredNightCurrentLevels() {
 }
 
 function saveNightCurrentLevels(levels) {
-  const normalized = {};
+  const normalized = readStoredNightCurrentLevels();
   NIGHT_BUILDING_KEYS.forEach(building => {
     const level = Math.max(0, Math.floor(Number(levels?.[building] || 0)));
     if (level > 0) normalized[building] = level;
@@ -377,8 +378,81 @@ function saveNightCurrentLevels(levels) {
   localStorage.setItem(NIGHT_CURRENT_LEVELS_STORAGE_KEY, JSON.stringify(normalized));
 }
 
+function readStoredNightUpgradeInfo() {
+  try {
+    const raw = localStorage.getItem(NIGHT_UPGRADE_INFO_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const normalized = {};
+
+    NIGHT_BUILDING_KEYS.forEach(building => {
+      const info = parsed?.[building];
+      if (!info) return;
+
+      normalized[building] = {
+        wood: Math.max(0, Math.floor(Number(info.wood || 0))),
+        stone: Math.max(0, Math.floor(Number(info.stone || 0))),
+        iron: Math.max(0, Math.floor(Number(info.iron || 0))),
+        pop: Math.max(0, Math.floor(Number(info.pop || 0))),
+        buildTime: String(info.buildTime || '').trim()
+      };
+    });
+
+    return normalized;
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveNightUpgradeInfo(info) {
+  const normalized = readStoredNightUpgradeInfo();
+
+  NIGHT_BUILDING_KEYS.forEach(building => {
+    const entry = info?.[building];
+    if (!entry) return;
+
+    normalized[building] = {
+      wood: Math.max(0, Math.floor(Number(entry.wood || 0))),
+      stone: Math.max(0, Math.floor(Number(entry.stone || 0))),
+      iron: Math.max(0, Math.floor(Number(entry.iron || 0))),
+      pop: Math.max(0, Math.floor(Number(entry.pop || 0))),
+      buildTime: String(entry.buildTime || '').trim()
+    };
+  });
+
+  localStorage.setItem(NIGHT_UPGRADE_INFO_STORAGE_KEY, JSON.stringify(normalized));
+}
+
 function getStoredNightCurrentLevel(building) {
   return readStoredNightCurrentLevels()[building] || '-';
+}
+
+function getStoredNightUpgradeInfo(building) {
+  return readStoredNightUpgradeInfo()[building] || null;
+}
+
+function formatNightUpgradeCost(building) {
+  const info = getStoredNightUpgradeInfo(building);
+  if (!info) return '-';
+
+  const costs = [
+    info.wood ? `H:${info.wood}` : '',
+    info.stone ? `L:${info.stone}` : '',
+    info.iron ? `E:${info.iron}` : '',
+    info.pop ? `B:${info.pop}` : ''
+  ].filter(Boolean);
+
+  return costs.length ? costs.join(' ') : '-';
+}
+
+function formatNightUpgradeTime(building) {
+  return getStoredNightUpgradeInfo(building)?.buildTime || '-';
+}
+
+function parseCompactNumber(text) {
+  const cleaned = String(text || '').replace(/\./g, '').replace(/\s+/g, '');
+  const match = cleaned.match(/\d+/);
+  return match ? Number(match[0]) : 0;
 }
 
 function parseLevelFromText(text) {
@@ -438,10 +512,103 @@ function readCurrentNightLevelsFromMainPage() {
   return levels;
 }
 
+function getMainBuildingRow(buildingKey) {
+  const content = document.querySelector('#content_value') || document;
+  const selectors = [
+    `#main_buildrow_${buildingKey}`,
+    `#main_buildlink_${buildingKey}`,
+    `[data-building="${buildingKey}"]`,
+    `.building_${buildingKey}`,
+    `.b_${buildingKey}`
+  ];
+
+  const node = selectors
+    .map(selector => content.querySelector(selector))
+    .find(Boolean);
+
+  return node?.closest('tr') || node || null;
+}
+
+function readResourceValue(row, resource) {
+  const selectors = [
+    `.cost_${resource}`,
+    `.cost-${resource}`,
+    `[data-resource="${resource}"]`,
+    `[class~="${resource}"]`
+  ];
+
+  const node = selectors
+    .map(selector => row.querySelector(selector))
+    .find(Boolean);
+
+  return parseCompactNumber(node?.textContent || '');
+}
+
+function readBuildTimeFromRow(row) {
+  const node = row.querySelector('.build_time, .build-time, .time, [data-duration], [data-build-time]');
+  const fromData = node?.getAttribute('data-duration') || node?.getAttribute('data-build-time') || '';
+  const dataSeconds = Number(fromData);
+  if (Number.isFinite(dataSeconds) && dataSeconds > 0) return formatDuration(dataSeconds * 1000);
+
+  const text = node?.textContent || row.textContent || '';
+  const match = text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/);
+  return match ? match[0] : '';
+}
+
+function readNightUpgradeInfoFromMainPage() {
+  const info = {};
+
+  NIGHT_BUILDING_KEYS.forEach(building => {
+    const row = getMainBuildingRow(building);
+    if (!row) return;
+
+    const entry = {
+      wood: readResourceValue(row, 'wood'),
+      stone: readResourceValue(row, 'stone'),
+      iron: readResourceValue(row, 'iron'),
+      pop: readResourceValue(row, 'pop') || readResourceValue(row, 'population'),
+      buildTime: readBuildTimeFromRow(row)
+    };
+
+    if (entry.wood || entry.stone || entry.iron || entry.pop || entry.buildTime) {
+      info[building] = entry;
+    }
+  });
+
+  return info;
+}
+
 function storeCurrentNightLevelsFromMainPage() {
   if (!isMainBuildingPage()) return;
 
   const levels = readCurrentNightLevelsFromMainPage();
+  const upgradeInfo = readNightUpgradeInfoFromMainPage();
+
+  if (Object.keys(levels).length > 0) saveNightCurrentLevels(levels);
+  if (Object.keys(upgradeInfo).length > 0) saveNightUpgradeInfo(upgradeInfo);
+}
+
+function readCurrentNightLevelsFromBuildingsOverview() {
+  const levels = {};
+  const rows = Array.from(document.querySelectorAll('#villages > tr, #villages tbody > tr'));
+
+  rows.forEach(row => {
+    NIGHT_BUILDING_KEYS.forEach(building => {
+      const cell = row.querySelector(`:scope > .b_${building}, .b_${building}`);
+      const level = parseCompactNumber(cell?.textContent || '');
+      if (level <= 0) return;
+
+      levels[building] = levels[building] ? Math.min(levels[building], level) : level;
+    });
+  });
+
+  return levels;
+}
+
+function storeCurrentNightLevelsFromBuildingsOverview() {
+  if (!isBuildingsOverviewPage()) return;
+
+  const levels = readCurrentNightLevelsFromBuildingsOverview();
   if (Object.keys(levels).length === 0) return;
 
   saveNightCurrentLevels(levels);
@@ -845,6 +1012,8 @@ function buildNightQueueRows() {
       <td>${index + 1}</td>
       <td>${building.label}</td>
       <td data-night-current-level="1">${currentLevel}</td>
+      <td>${formatNightUpgradeCost(building.key)}</td>
+      <td>${formatNightUpgradeTime(building.key)}</td>
       <td>
         <input type="number" min="${minimumLevel}" step="1" data-night-building="${building.key}" data-night-level="1" value="${targetLevel}">
       </td>
@@ -879,6 +1048,8 @@ function openNightQueueModal() {
               <th>#</th>
               <th>Gebaeude</th>
               <th>Aktuell</th>
+              <th>Kosten</th>
+              <th>Bauzeit</th>
               <th>Ziellevel</th>
             </tr>
           </thead>
@@ -1564,6 +1735,7 @@ async function startNightBuilding() {
   loadPersistentRaidConfig();
   loadPersistentNightQueue();
   storeCurrentNightLevelsFromMainPage();
+  storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
   insertRaidPanel();
   scheduleRaidPageSwitch();
