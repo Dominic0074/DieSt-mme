@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      1.11
 // @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
 // @author       kk
 // @match        https://*/game.php*
@@ -1150,7 +1150,25 @@ function updateRaidConfigPreview(modal) {
   const target = modal.querySelector('[data-raid-preview="1"]');
   if (!target) return;
 
-  target.innerHTML = renderRaidPreview(readRaidConfigFromModal(modal));
+  const snapshot = readRaidConfigFromModal(modal);
+  target.innerHTML = renderRaidPreview(snapshot);
+  applyOptimizedRaidPlanToModal(modal, snapshot);
+}
+
+function applyOptimizedRaidPlanToModal(modal, snapshot) {
+  if (snapshot.distributionMode === 'manual') return;
+
+  const availableUnits = readAvailableRaidUnits();
+  const plan = withTemporaryRaidConfig(snapshot, () => getRaidPreviewPlan(availableUnits));
+
+  [1, 2, 3, 4].forEach(index => {
+    RAID_UNITS.forEach(unit => {
+      const input = modal.querySelector(`[data-slot="${index}"][data-unit="${unit}"]`);
+      if (!input) return;
+
+      input.value = String(Math.max(0, Math.floor(Number(plan?.[index]?.[unit] || 0))));
+    });
+  });
 }
 
 function openRaidConfigModal() {
@@ -1924,42 +1942,114 @@ function getPerRunCapacities(totalCapacity, ratios, maxDurationSeconds, duration
 }
 
 function getPerHourCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor) {
-  const capacities = new Array(ratios.length).fill(0);
-  let remaining = totalCapacity;
-  const maxCaps = ratios.map(ratio => getRaidMaxCapacityForDuration(maxDurationSeconds, ratio, durationFactor));
-  const stepSize = Math.max(10, Math.ceil(totalCapacity / 500));
+  return maxDurationSeconds
+    ? getPerHourCapacitiesWithLimits(totalCapacity, ratios, maxDurationSeconds, durationFactor)
+    : getPerHourCapacitiesSimple(totalCapacity, ratios, durationFactor);
+}
 
-  for (let step = 0; step < 500 && remaining > 0; step++) {
-    let bestIndex = -1;
-    let bestGain = -Infinity;
+function getPerHourCapacitiesSimple(totalCapacity, ratios, durationFactor) {
+  const count = ratios.length;
+  if (totalCapacity <= 0 || count === 0) return new Array(count).fill(0);
 
-    ratios.forEach((ratio, index) => {
-      if (capacities[index] >= maxCaps[index]) return;
+  let shares = new Array(count).fill(1 / count);
+  let bestScore = getPerHourCapacityScore(shares, totalCapacity, ratios, durationFactor);
 
-      const current = capacities[index];
-      const increment = Math.min(stepSize, remaining, maxCaps[index] - current);
-      if (increment <= 0) return;
+  for (let iteration = 0; iteration < 400; iteration++) {
+    let improved = false;
 
-      const beforeDuration = getRaidDurationSeconds(current, ratio, durationFactor);
-      const afterDuration = getRaidDurationSeconds(current + increment, ratio, durationFactor);
-      const before = beforeDuration > 0 ? (current * ratio) / beforeDuration : 0;
-      const after = afterDuration > 0 ? ((current + increment) * ratio) / afterDuration : 0;
-      const gain = after - before;
+    for (let index = 0; index < count - 1; index++) {
+      const nextIndex = index + 1;
+      const deltaCurrent = shares[index] * 0.5 || (1 / (2 * count));
+      const deltaNext = shares[nextIndex] * 0.5 || (1 / (2 * count));
+      const candidates = [
+        shares,
+        normalizeRaidCapacityShares(shares.map((share, shareIndex) => {
+          if (shareIndex === index) return share - deltaCurrent;
+          if (shareIndex === nextIndex) return share + deltaCurrent;
+          return share;
+        })),
+        normalizeRaidCapacityShares(shares.map((share, shareIndex) => {
+          if (shareIndex === index) return share + deltaNext;
+          if (shareIndex === nextIndex) return share - deltaNext;
+          return share;
+        }))
+      ];
 
-      if (gain > bestGain) {
-        bestGain = gain;
-        bestIndex = index;
+      candidates.forEach(candidate => {
+        const score = getPerHourCapacityScore(candidate, totalCapacity, ratios, durationFactor);
+        if (score > bestScore + 1e-9) {
+          shares = candidate;
+          bestScore = score;
+          improved = true;
+        }
+      });
+    }
+
+    if (!improved) break;
+  }
+
+  return shares.map(share => Math.max(0, share) * totalCapacity);
+}
+
+function normalizeRaidCapacityShares(shares) {
+  const sum = shares.reduce((total, share) => total + Math.max(0, share), 0);
+  return shares.map(share => sum > 0 ? Math.max(0, share) / sum : 0);
+}
+
+function getPerHourCapacityScore(shares, totalCapacity, ratios, durationFactor) {
+  return shares.reduce((score, share, index) => {
+    const capacity = Math.max(0, share * totalCapacity);
+    const loot = capacity * ratios[index];
+    const duration = getRaidDurationSeconds(capacity, ratios[index], durationFactor);
+    return duration > 0 ? score + (loot / duration) : score;
+  }, 0);
+}
+
+function getPerHourCapacitiesWithLimits(totalCapacity, ratios, maxDurationSeconds, durationFactor) {
+  const count = ratios.length;
+  if (count === 0 || totalCapacity <= 0) return new Array(count).fill(0);
+
+  const maxCapacities = ratios.map(ratio => getRaidMaxCapacityForDuration(maxDurationSeconds, ratio, durationFactor));
+  let remainingCapacity = Math.min(totalCapacity, maxCapacities.reduce((sum, capacity) => {
+    return sum + (Number.isFinite(capacity) ? capacity : 0);
+  }, 0));
+  const fixedCapacities = new Array(count).fill(0);
+  let activeIndexes = Array.from({ length: count }, (_, index) => index).filter(index => maxCapacities[index] > 0);
+
+  while (activeIndexes.length > 0 && remainingCapacity > 1e-9) {
+    const activeRatios = activeIndexes.map(index => ratios[index]);
+    const activeCapacities = getPerHourCapacitiesSimple(remainingCapacity, activeRatios, durationFactor);
+    const overloaded = [];
+
+    activeIndexes.forEach((index, activePosition) => {
+      if (activeCapacities[activePosition] > maxCapacities[index] + 1e-9) overloaded.push(activePosition);
+    });
+
+    if (overloaded.length === 0) {
+      activeIndexes.forEach((index, activePosition) => {
+        fixedCapacities[index] += activeCapacities[activePosition];
+      });
+      remainingCapacity = 0;
+      break;
+    }
+
+    let frozenCapacity = 0;
+    const keepIndexes = [];
+
+    activeIndexes.forEach((index, activePosition) => {
+      if (activeCapacities[activePosition] > maxCapacities[index] + 1e-9) {
+        fixedCapacities[index] += maxCapacities[index];
+        frozenCapacity += maxCapacities[index];
+      } else {
+        keepIndexes.push(index);
       }
     });
 
-    if (bestIndex < 0) break;
-
-    const increment = Math.min(stepSize, remaining, maxCaps[bestIndex] - capacities[bestIndex]);
-    capacities[bestIndex] += increment;
-    remaining -= increment;
+    remainingCapacity = Math.max(0, remainingCapacity - frozenCapacity);
+    activeIndexes = keepIndexes;
   }
 
-  return capacities;
+  return fixedCapacities;
 }
 
 function allocateRaidUnitsToCapacities(targetCapacities, availableUnits, activeIndexes) {
