@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.19
-// @description  Baut die Nacht-Warteschlange ab und stoppt danach. Sofortiger Stop bei Bot-Schutz.
+// @version      1.22
+// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug mit Auto-Truppen-Schalter und Verteilung ueber ALLE aktiven Slots, Start von jeder Seite aus.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
@@ -24,6 +24,7 @@ const RAID_CONFIG = {
   autoStart: true,
   switchPages: true,
   returnToBuildings: true,
+  limitToHomeUnits: true,   // Sicherheitsnetz: nie mehr senden, als gerade zuhause steht
   enabledOptions: [1, 2, 3, 4],
   distributionMode: 'optimizedEqual',
   maxRaidDurationHours: 0,
@@ -118,6 +119,7 @@ const RAID_NEXT_READY_KEY = 'ds_raid_next_ready_at';
 const RAID_READY_TIMES_KEY = 'ds_raid_ready_times';
 const RAID_NEXT_SWITCH_KEY = 'ds_raid_next_switch_at';
 const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
+const RAID_AUTOCALC_KEY = 'ds_raid_autocalc_v1';
 const RAID_PREFETCH_UNITS_KEY = 'ds_raid_prefetch_units_pending';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
 const RAID_STORED_UNITS_KEY = 'ds_raid_stored_units_v1';
@@ -236,6 +238,30 @@ function getNightModeStatus() {
 
 function isRaidAutomationActive() {
   return localStorage.getItem(RAID_AUTO_ACTIVE_KEY) === '1';
+}
+
+// NEU: Auto-Truppen-Schalter. AN = Script rechnet selbst (ignoriert die Slot-Truppen
+// aus der Konfig). AUS = es sendet die konfigurierten Slot-Truppen (manuell).
+function isRaidAutoCalcActive() {
+  const raw = localStorage.getItem(RAID_AUTOCALC_KEY);
+  return raw === null ? true : raw === '1';   // Standard: an
+}
+
+function setRaidAutoCalc(active) {
+  localStorage.setItem(RAID_AUTOCALC_KEY, active ? '1' : '0');
+  updateStatusBanner();
+  updateRaidPlanDisplays();
+}
+
+function toggleRaidAutoCalc() {
+  setRaidAutoCalc(!isRaidAutoCalcActive());
+}
+
+// Effektiver Verteilmodus: Auto-Truppen AN -> optimiert (Flavor aus der Konfig,
+// sonst "gleich lang"); Auto-Truppen AUS -> manuell (konfigurierte Truppen pro Slot).
+function getEffectiveDistributionMode() {
+  if (!isRaidAutoCalcActive()) return 'manual';
+  return RAID_CONFIG.distributionMode === 'manual' ? 'optimizedEqual' : RAID_CONFIG.distributionMode;
 }
 
 function normalizeRaidConfig(config) {
@@ -710,6 +736,23 @@ function stopRaidAutomation() {
   updateStatusBanner();
 }
 
+// NEU: Wenn die Automatik aktiv ist, aber wir auf einer Seite stehen, die nicht
+// Teil des Raubzug-Zyklus ist (Bericht, Karte, Forschung ...), ueber die
+// Kaserne in den Zyklus einsteigen.
+function enterRaidCycleFromAnywhere() {
+  if (!isRaidAutomationActive()) return false;
+  if (BOT_PROTECTION_TRIGGERED) return false;
+  if (isBotProtectionActive()) { triggerBotProtectionStop(); return false; }
+
+  // Seiten, die bereits Teil des Zyklus sind, behandeln sich selbst.
+  if (isBarracksPage() || isScavengePage() || isBuildingsOverviewPage()) return false;
+
+  // Ueberall sonst: ueber die Kaserne in den Zyklus einsteigen.
+  localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
+  window.location.href = getBarracksUrl();
+  return true;
+}
+
 async function handleRaidUnitPrefetch() {
   if (!isRaidAutomationActive()) return false;
   if (localStorage.getItem(RAID_PREFETCH_UNITS_KEY) !== '1') return false;
@@ -755,6 +798,7 @@ function initStatusBanner() {
       <button type="button" data-action="startRaidAuto">Start</button>
       <button type="button" data-action="stopRaidAuto">Stop</button>
     </div>
+    <button type="button" class="ds-config-button" data-action="toggleAutoCalc" data-field="autoCalcButton">Auto-Truppen: -</button>
     <button type="button" class="ds-config-button" data-action="configureRaids">Konfig Raubzug</button>
     <button type="button" class="ds-config-button" data-action="configureRecruitment">Konfig Rekrutierung</button>
     <button type="button" class="ds-config-button" data-action="configureNightQueue">Zielbild bearbeiten</button>
@@ -1043,6 +1087,7 @@ function initStatusBanner() {
   banner.querySelector('[data-action="configureRaids"]').addEventListener('click', openRaidConfigModal);
   banner.querySelector('[data-action="configureRecruitment"]').addEventListener('click', openRecruitConfigModal);
   banner.querySelector('[data-action="configureNightQueue"]').addEventListener('click', openNightQueueModal);
+  banner.querySelector('[data-action="toggleAutoCalc"]').addEventListener('click', toggleRaidAutoCalc);
   updateStatusBanner();
   updateRaidPlanDisplays();
   updateNightPlanDisplays();
@@ -1050,11 +1095,20 @@ function initStatusBanner() {
 }
 
 function buildRaidPlanText() {
-  const modeLabel = RAID_DISTRIBUTION_LABELS[RAID_CONFIG.distributionMode] || RAID_CONFIG.distributionMode;
+  const effMode = getEffectiveDistributionMode();
+  const modeLabel = RAID_DISTRIBUTION_LABELS[effMode] || effMode;
   const maxDuration = getRaidMaxDurationSeconds();
-  const prefix = RAID_CONFIG.distributionMode === 'manual'
-    ? `Modus ${modeLabel}`
-    : `Modus ${modeLabel}${maxDuration ? ` bis ${formatDuration(maxDuration * 1000)}` : ''}`;
+  const prefix = effMode === 'manual'
+    ? `Modus ${modeLabel} (manuell)`
+    : `Auto ${modeLabel}${maxDuration ? ` bis ${formatDuration(maxDuration * 1000)}` : ''}`;
+
+  if (effMode !== 'manual') {
+    const activeSlots = RAID_CONFIG.enabledOptions
+      .filter(index => getRaidConfig(index)?.enabled !== false)
+      .join(', ');
+    return `${prefix} | Slots ${activeSlots || '-'} (Truppen werden berechnet)`;
+  }
+
   const slotPlan = RAID_CONFIG.enabledOptions
     .map(index => ({ index, config: getRaidConfig(index) }))
     .filter(({ config }) => config && config.enabled !== false)
@@ -1588,6 +1642,8 @@ function updateStatusBanner() {
   setBannerField('raidSwitch', nextSwitchAt ? `${formatClock(nextSwitchAt)} (${formatDuration(nextSwitchAt - Date.now())})` : '-');
   setBannerField('nightStatus', getNightModeStatus());
   setBannerField('botStatus', BOT_PROTECTION_TRIGGERED ? 'erkannt' : 'ok');
+  const autoCalcButton = document.querySelector('#ds-status-banner [data-field="autoCalcButton"]');
+  if (autoCalcButton) autoCalcButton.textContent = `Auto-Truppen: ${isRaidAutoCalcActive() ? 'AN' : 'AUS'}`;
   updateNightPlanDisplays();
   updateRaidActionButtons();
 }
@@ -1819,19 +1875,24 @@ function formatRaidReadySummary(fallbackTimestamp) {
     .join('\n');
 }
 
+// GEAENDERT: Laeuft jetzt auch ohne gespeicherte Fertig-Zeit weiter (Selbstheilung),
+// damit der Zyklus nicht auf der Gebaeudeuebersicht haengen bleibt.
 function scheduleRaidPageSwitch() {
   if (!RAID_CONFIG.switchPages || !isRaidAutomationActive() || !isBuildingsOverviewPage()) return;
 
   const nextReadyAt = getStoredNextRaidReadyAt();
-  if (!nextReadyAt) return;
-
   const bufferMs = random(RAID_CONFIG.nextRaidBufferMin, RAID_CONFIG.nextRaidBufferMax);
-  const waitMs = Math.max(0, nextReadyAt - Date.now() + bufferMs);
+
+  // Bekannte Fertig-Zeit -> bis dahin warten. Sonst kurzer Fallback,
+  // damit der Zyklus auch ohne gespeicherte Zeit weiterlaeuft.
+  const waitMs = nextReadyAt
+    ? Math.max(0, nextReadyAt - Date.now() + bufferMs)
+    : random(RELOAD_WAIT_MIN, RELOAD_WAIT_MAX);
+
   const switchAt = Date.now() + waitMs;
-  const switchTime = new Date(switchAt).toLocaleTimeString('de-DE');
   localStorage.setItem(RAID_NEXT_SWITCH_KEY, String(switchAt));
   updateStatusBanner();
-  console.log(`Raubzug-Wechsel geplant um ${switchTime}.`);
+  console.log(`Raubzug-Wechsel geplant um ${new Date(switchAt).toLocaleTimeString('de-DE')}.`);
 
   setTimeout(() => {
     if (!isRaidAutomationActive()) return;
@@ -2106,12 +2167,20 @@ function readAvailableRaidUnits() {
   return readStoredRaidUnits();
 }
 
+// NEU: Auf der Raubzugseite die ZUHAUSE stehenden, sofort sendbaren Truppen.
+function readScavengeHomeUnits() {
+  return normalizeRaidUnits(readAvailableRaidUnitsFromPage());
+}
+
+// GEAENDERT: Quelle fuer die Verteilungsrechnung ist jetzt der GESAMTBESTAND
+// aus der Kaserne/dem Stall ("Insgesamt"), nicht nur die zuhause stehenden Truppen.
 function readAvailableRaidUnitsForSending() {
-  const result = getEmptyRaidUnits();
-  RAID_UNITS.forEach(unit => {
-    result[unit] = Math.max(0, Math.floor(Number(readScavengeHomeUnitCount(unit) || 0)));
-  });
-  return result;
+  // Vorzug: Gesamtbestand (inkl. unterwegs) – zuletzt in der Kaserne/im Stall ausgelesen.
+  const storedTotals = readStoredRaidUnits();
+  if (sumRaidUnits(storedTotals) > 0) return storedTotals;
+
+  // Fallback, falls noch nichts gespeichert wurde: zuhause stehende Truppen.
+  return readScavengeHomeUnits();
 }
 
 function setRaidInputValue(input, value) {
@@ -2417,6 +2486,112 @@ function calculateOptimizedRaidPlan(availableUnits, freeOptions) {
   return allocateRaidUnitsToCapacities(targetCapacities, usableUnits, activeIndexes);
 }
 
+// NEU: Ziel-Kapazitaet pro AKTIVEM Slot (alle enabled Slots, nicht nur freie),
+// berechnet aus dem Gesamtbestand. So bekommt jeder Slot seinen fairen Anteil,
+// statt dass alles in die gerade freien Slots gekippt wird.
+function getRaidTargetCapacities(armyUnits, mode) {
+  const activeIndexes = RAID_CONFIG.enabledOptions
+    .filter(index => getRaidConfig(index)?.enabled !== false && RAID_SLOT_RATIOS[index])
+    .sort((a, b) => a - b);
+
+  if (activeIndexes.length === 0) return {};
+
+  const usableUnits = getAvailableRaidUnitsAfterReserve(armyUnits);
+  const totalCapacity = getRaidCapacity(usableUnits);
+  if (totalCapacity <= 0) return {};
+
+  const ratios = activeIndexes.map(index => RAID_SLOT_RATIOS[index]);
+  const maxDurationSeconds = getRaidMaxDurationSeconds();
+  const durationFactor = getRaidDurationFactor();
+  let capacities;
+
+  if (mode === 'optimizedRun') {
+    capacities = getPerRunCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor);
+  } else if (mode === 'optimizedHour') {
+    capacities = getPerHourCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor);
+  } else {
+    capacities = getEqualDurationCapacities(totalCapacity, ratios, maxDurationSeconds, durationFactor);
+  }
+
+  const result = {};
+  activeIndexes.forEach((index, position) => {
+    result[index] = Math.max(0, Number(capacities[position] || 0));
+  });
+  return result;
+}
+
+// NEU: Fuellt die uebergebenen (freien) Slots bis zu ihrer Ziel-Kapazitaet aus
+// dem sendbaren Bestand auf – OHNE Rest-Verteilung, damit kein Slot ueberlaeuft.
+function allocateUnitsToTargetCapacities(freeIndexes, targetCapacityByIndex, sourceUnits) {
+  const allocation = {};
+  const remaining = normalizeRaidUnits(sourceUnits);
+  const unitsByCarry = RAID_UNITS.slice().sort((a, b) => RAID_UNIT_CARRY[b] - RAID_UNIT_CARRY[a]);
+
+  freeIndexes.forEach(index => {
+    allocation[index] = getEmptyRaidUnits();
+    let remainingCapacity = Math.max(0, Number(targetCapacityByIndex[index] || 0));
+
+    unitsByCarry.forEach(unit => {
+      if (remainingCapacity <= 0) return;
+      const carry = RAID_UNIT_CARRY[unit];
+      const available = Math.max(0, Number(remaining[unit] || 0));
+      const take = Math.min(available, Math.floor(remainingCapacity / carry));
+      if (take <= 0) return;
+      allocation[index][unit] = take;
+      remaining[unit] -= take;
+      remainingCapacity -= take * carry;
+    });
+  });
+
+  return allocation;
+}
+
+// GEAENDERT: Sende-Plan fuer die freien Slots.
+//  - manuell: konfigurierte Truppen (begrenzt auf sendbaren Bestand)
+//  - optimiert: Ziel-Kapazitaet je Slot ueber ALLE aktiven Slots aus dem
+//    Gesamtbestand; gefuellt werden nur die freien Slots aus dem sendbaren Bestand.
+function buildRaidSendPlan(armyUnits, homeUnits, freeOptions) {
+  const mode = getEffectiveDistributionMode();
+
+  const freeIndexes = freeOptions
+    .map(({ index }) => index)
+    .filter(index => getRaidConfig(index)?.enabled !== false && RAID_SLOT_RATIOS[index])
+    .sort((a, b) => a - b);
+
+  if (freeIndexes.length === 0) return {};
+
+  // Sendbarer Bestand: nur zuhause stehende Truppen (oder Gesamt, falls Schalter aus
+  // bzw. Heimatzahl nicht lesbar war), jeweils abzueglich Reserve.
+  const useHome = RAID_CONFIG.limitToHomeUnits && sumRaidUnits(homeUnits) > 0;
+  const sendSource = getAvailableRaidUnitsAfterReserve(useHome ? homeUnits : armyUnits);
+
+  if (mode === 'manual') {
+    const remaining = normalizeRaidUnits(sendSource);
+    const plan = {};
+
+    freeIndexes.forEach(index => {
+      const config = getRaidConfig(index);
+      if (!config) return;
+
+      const units = getEmptyRaidUnits();
+      RAID_UNITS.forEach(unit => {
+        const requested = Math.max(0, Math.floor(Number(config.units?.[unit] || 0)));
+        units[unit] = Math.min(requested, remaining[unit]);
+      });
+
+      if (sumRaidUnits(units) < RAID_CONFIG.minUnitsPerRaid) return;
+      plan[index] = units;
+      subtractRaidUnits(remaining, units);
+    });
+
+    return plan;
+  }
+
+  // Ziel-Kapazitaeten ueber ALLE aktiven Slots aus dem Gesamtbestand.
+  const targetCapacities = getRaidTargetCapacities(armyUnits, mode);
+  return allocateUnitsToTargetCapacities(freeIndexes, targetCapacities, sendSource);
+}
+
 function getRaidUnitsForOption(index, availableUnits) {
   return getConfiguredRaidUnits(index, availableUnits);
 }
@@ -2471,6 +2646,8 @@ function insertRaidPanel() {
   });
 }
 
+// GEAENDERT: Plant die Verteilung jetzt auf Basis des GESAMTBESTANDS (Kaserne)
+// und begrenzt den tatsaechlichen Versand auf die zuhause stehenden Truppen.
 async function startScavengingRaids() {
   if (!RAID_CONFIG.enabled || !isScavengePage()) return;
   if (RAID_RUNNING) return;
@@ -2503,30 +2680,38 @@ async function startScavengingRaids() {
       return;
     }
 
-    let sent = 0;
-    const availableUnits = readAvailableRaidUnitsForSending();
-    if (sumRaidUnits(availableUnits) === 0) {
-      setStatus('Keine zuhause verfuegbaren Truppen auf der Raubzugseite gefunden.');
+    // Verteilung auf Basis des GESAMTBESTANDS (Kaserne "Insgesamt") berechnen.
+    const totalUnits = readAvailableRaidUnitsForSending();
+    if (sumRaidUnits(totalUnits) === 0) {
+      setStatus('Kein Truppenbestand bekannt (Kaserne noch nicht ausgelesen?).');
       storeNextRaidReadyAt();
       await returnToBuildingsOverview();
       return;
     }
 
+    // Zuhause stehende Truppen (sofort sendbar) – begrenzen den tatsaechlichen Versand.
+    const homeUnits = readScavengeHomeUnits();
+
+    // Plan: Ziel-Anteile ueber ALLE aktiven Slots aus dem Gesamtbestand,
+    // gefuellt werden nur die freien Slots aus dem Heimatbestand.
+    const sendPlan = buildRaidSendPlan(totalUnits, homeUnits, options);
+
+    let sent = 0;
     for (let i = 0; i < options.length; i++) {
       if (BOT_PROTECTION_TRIGGERED) return;
 
       const { option, index } = options[i];
-      const raidUnits = getRaidUnitsForOption(index, availableUnits);
-      if (!raidUnits) {
-        setStatus(`Raubzug ${index}: zu wenig passende Truppen verfuegbar.`);
+      const raidUnits = sendPlan[index];
+      if (!raidUnits || sumRaidUnits(raidUnits) < RAID_CONFIG.minUnitsPerRaid) {
+        setStatus(`Raubzug ${index}: zu wenig Truppen zuhause.`);
         continue;
       }
 
       clearRaidOptionInputs(option);
       await Sleep(random(RAID_CONFIG.actionDelayMin, RAID_CONFIG.actionDelayMax));
 
-      const totalUnits = applyRaidUnitsToOption(option, raidUnits);
-      if (totalUnits < RAID_CONFIG.minUnitsPerRaid) {
+      const totalUnitsSent = applyRaidUnitsToOption(option, raidUnits);
+      if (totalUnitsSent < RAID_CONFIG.minUnitsPerRaid) {
         setStatus(`Raubzug ${index}: keine passenden Eingabefelder gefunden.`);
         continue;
       }
@@ -2540,7 +2725,6 @@ async function startScavengingRaids() {
 
       sendButton.click();
       sent++;
-      subtractRaidUnits(availableUnits, raidUnits);
 
       await Sleep(random(RAID_CONFIG.sendDelayMin, RAID_CONFIG.sendDelayMax));
     }
@@ -2596,7 +2780,7 @@ async function startNightBuilding() {
       if (BOT_PROTECTION_TRIGGERED) return;
       if (currentQueueCount >= 5) break;
 
-      let targetBuilding = nightQueue[j].building; 
+      let targetBuilding = nightQueue[j].building;
       let targetLevel    = nightQueue[j].level;
 
       let cell = row.querySelector(`:scope > .b_${targetBuilding}`);
@@ -2615,7 +2799,10 @@ async function startNightBuilding() {
       queueFinished = false;
 
       let btn = cell.querySelector(':scope > a');
-      if (cell.childElementCount === 0 || !btn) break;
+      // GEAENDERT: nur dieses Gebaeude ueberspringen (z. B. zu wenig Rohstoffe oder
+      // Voraussetzungen fehlen), nicht die restliche Warteschlange abbrechen. Sonst
+      // werden weiter hinten gelistete Gebaeude wie Schmiede/Marktplatz nie gebaut.
+      if (cell.childElementCount === 0 || !btn) continue;
 
       btn.click();
       currentQueueCount++;
@@ -2660,7 +2847,19 @@ async function startNightBuilding() {
   storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
   insertRaidPanel();
+
+  // Automatik aktiv, aber wir stehen ausserhalb des Zyklus -> in die Kaserne.
+  if (enterRaidCycleFromAnywhere()) return;
+
+  // Kaserne im Zyklus: erst rekrutieren (Reload), sonst Truppen einlesen
+  // und zur Raubzugseite wechseln.
+  if (isRaidAutomationActive() && isBarracksPage() && !BOT_PROTECTION_TRIGGERED) {
+    if (runBarracksAutoRecruitment()) return;            // rekrutiert -> Seite laedt neu
+    localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');  // sonst Prefetch erzwingen
+  }
+
   scheduleRaidPageSwitch();
+
   handleRaidUnitPrefetch().then(prefetchHandled => {
     if (prefetchHandled) return;
     if (runBarracksAutoRecruitment()) return;
@@ -2668,5 +2867,6 @@ async function startNightBuilding() {
       startScavengingRaids();
     }
   });
+
   startNightBuilding();
 })();
