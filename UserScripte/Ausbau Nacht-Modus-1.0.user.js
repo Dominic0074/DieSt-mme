@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.22
-// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug mit Auto-Truppen-Schalter und Verteilung ueber ALLE aktiven Slots, Start von jeder Seite aus.
+// @version      1.23
+// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest vor dem Lauf Kaserne und Stall aus, Auto-Truppen-Schalter, Verteilung ueber ALLE aktiven Slots, Start von jeder Seite aus.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
@@ -25,6 +25,7 @@ const RAID_CONFIG = {
   switchPages: true,
   returnToBuildings: true,
   limitToHomeUnits: true,   // Sicherheitsnetz: nie mehr senden, als gerade zuhause steht
+  readStableUnits: true,    // vor dem Raubzug auch den Stall (LKav/ber.Bogen/SKav) auslesen
   enabledOptions: [1, 2, 3, 4],
   distributionMode: 'optimizedEqual',
   maxRaidDurationHours: 0,
@@ -745,7 +746,7 @@ function enterRaidCycleFromAnywhere() {
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return false; }
 
   // Seiten, die bereits Teil des Zyklus sind, behandeln sich selbst.
-  if (isBarracksPage() || isScavengePage() || isBuildingsOverviewPage()) return false;
+  if (isBarracksPage() || isStablePage() || isScavengePage() || isBuildingsOverviewPage()) return false;
 
   // Ueberall sonst: ueber die Kaserne in den Zyklus einsteigen.
   localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
@@ -756,14 +757,26 @@ function enterRaidCycleFromAnywhere() {
 async function handleRaidUnitPrefetch() {
   if (!isRaidAutomationActive()) return false;
   if (localStorage.getItem(RAID_PREFETCH_UNITS_KEY) !== '1') return false;
-  if (!isBarracksPage()) return false;
+  if (!isBarracksPage() && !isStablePage()) return false;
   if (BOT_PROTECTION_TRIGGERED) return true;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
+  // Reihenfolge: Kaserne -> (optional) Stall -> Raubzugseite.
+  // Kaserne liest Speer/Schwert/Axt/Bogen, Stall liest LKav/ber.Bogen/SKav.
+  const goToStableNext = isBarracksPage() && RAID_CONFIG.readStableUnits;
+
+  const proceed = () => {
+    if (goToStableNext) {
+      window.location.href = getStableUrl();
+    } else {
+      localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
+      window.location.href = getScavengeUrl();
+    }
+  };
+
   if (isRecruitCooldownActive()) {
     storeCurrentRaidUnitsFromRecruitPages();
-    localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
-    window.location.href = getScavengeUrl();
+    proceed();
     return true;
   }
 
@@ -774,8 +787,7 @@ async function handleRaidUnitPrefetch() {
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
   storeCurrentRaidUnitsFromRecruitPages();
-  localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
-  window.location.href = getScavengeUrl();
+  proceed();
   return true;
 }
 
@@ -1734,6 +1746,10 @@ function isBarracksPage() {
   return getCurrentScreen() === 'barracks';
 }
 
+function isStablePage() {
+  return getCurrentScreen() === 'stable';
+}
+
 function buildGameUrl(screen, mode) {
   const params = new URLSearchParams(location.search);
   const villageId = getCurrentVillageId();
@@ -1750,6 +1766,10 @@ function getBuildingsUrl() {
 
 function getBarracksUrl() {
   return buildGameUrl('barracks');
+}
+
+function getStableUrl() {
+  return buildGameUrl('stable');
 }
 
 function getScavengeUrl() {
@@ -2780,7 +2800,7 @@ async function startNightBuilding() {
       if (BOT_PROTECTION_TRIGGERED) return;
       if (currentQueueCount >= 5) break;
 
-      let targetBuilding = nightQueue[j].building;
+      let targetBuilding = nightQueue[j].building; 
       let targetLevel    = nightQueue[j].level;
 
       let cell = row.querySelector(`:scope > .b_${targetBuilding}`);
