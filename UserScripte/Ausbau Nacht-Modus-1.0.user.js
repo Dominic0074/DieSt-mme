@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.24
-// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest Kaserne und Stall aus, Auto-Truppen-Schalter, Auto-Rekrutierung fuer Kaserne und Stall, Start von jeder Seite aus.
+// @version      1.25
+// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest Kaserne und Stall aus, Auto-Truppen-Schalter, Auto-Rekrutierung (AJAX-sicher) fuer Kaserne und Stall, Start von jeder Seite aus.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
@@ -771,20 +771,16 @@ async function handleRaidUnitPrefetch() {
   // Kaserne liest Speer/Schwert/Axt/Bogen, Stall liest LKav/ber.Bogen/SKav.
   const goToStableNext = isBarracksPage() && RAID_CONFIG.readStableUnits;
 
-  const proceed = () => {
-    if (goToStableNext) {
-      window.location.href = getStableUrl();
-    } else {
-      localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
-      window.location.href = getScavengeUrl();
-    }
-  };
-
-  if (isRecruitCooldownActive()) {
-    storeCurrentRaidUnitsFromRecruitPages();
-    proceed();
-    return true;
+  // Auf der aktuellen Seite rekrutieren (AJAX, kein Reload). Die Funktion wartet
+  // intern kurz, bis der Request angekommen ist.
+  if (isBarracksPage()) {
+    await runBarracksAutoRecruitment();
+  } else {
+    await runStableAutoRecruitment();
   }
+  if (BOT_PROTECTION_TRIGGERED) return true;
+  if (!isRaidAutomationActive()) return true;
+  if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
   storeCurrentRaidUnitsFromRecruitPages();
   await Sleep(random(RAID_CONFIG.preRaidReadDelayMin, RAID_CONFIG.preRaidReadDelayMax));
@@ -793,7 +789,13 @@ async function handleRaidUnitPrefetch() {
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
   storeCurrentRaidUnitsFromRecruitPages();
-  proceed();
+
+  if (goToStableNext) {
+    window.location.href = getStableUrl();
+  } else {
+    localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
+    window.location.href = getScavengeUrl();
+  }
   return true;
 }
 
@@ -2132,7 +2134,7 @@ function setRecruitInputValue(input, value) {
   input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
 }
 
-function runAutoRecruitmentForUnits(units, lastActionKey, screen) {
+async function runAutoRecruitmentForUnits(units, lastActionKey, screen) {
   if (!RECRUIT_CONFIG.enabled) return false;
   if (isRecruitCooldownActive(screen)) return false;
   if (BOT_PROTECTION_TRIGGERED) return false;
@@ -2170,15 +2172,18 @@ function runAutoRecruitmentForUnits(units, lastActionKey, screen) {
   if (submit) submit.click();
   else form.submit();
 
+  // Rekrutierung laeuft per AJAX (kein Seiten-Reload) -> kurz warten, damit der
+  // Request ankommt, bevor der Zyklus weiternavigiert.
+  await Sleep(random(1500, 3000));
   return true;
 }
 
-function runBarracksAutoRecruitment() {
+async function runBarracksAutoRecruitment() {
   if (!isBarracksPage()) return false;
   return runAutoRecruitmentForUnits(BARRACKS_RECRUIT_UNITS, RECRUIT_LAST_ACTION_KEY, 'barracks');
 }
 
-function runStableAutoRecruitment() {
+async function runStableAutoRecruitment() {
   if (!isStablePage()) return false;
   return runAutoRecruitmentForUnits(STABLE_RECRUIT_UNITS, RECRUIT_LAST_ACTION_STABLE_KEY, 'stable');
 }
@@ -2894,26 +2899,23 @@ async function startNightBuilding() {
   // Automatik aktiv, aber wir stehen ausserhalb des Zyklus -> in die Kaserne.
   if (enterRaidCycleFromAnywhere()) return;
 
-  // Kaserne im Zyklus: erst rekrutieren (Reload), sonst Truppen einlesen
-  // und zur Raubzugseite wechseln.
-  if (isRaidAutomationActive() && isBarracksPage() && !BOT_PROTECTION_TRIGGERED) {
-    if (runBarracksAutoRecruitment()) return;            // rekrutiert -> Seite laedt neu
-    localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');  // sonst Prefetch erzwingen
-  }
-
-  // Stall im Zyklus: erst rekrutieren (Reload), danach liest der Prefetch die
-  // Stall-Einheiten und wechselt zur Raubzugseite.
-  if (isRaidAutomationActive() && isStablePage() && !BOT_PROTECTION_TRIGGERED) {
-    if (runStableAutoRecruitment()) return;              // rekrutiert -> Seite laedt neu
+  // Auf Kaserne/Stall im Automatik-Betrieb sicherstellen, dass der Prefetch laeuft.
+  // Der Prefetch erledigt Rekrutierung, Auslesen und Weiterleitung selbst.
+  if (isRaidAutomationActive() && (isBarracksPage() || isStablePage()) && !BOT_PROTECTION_TRIGGERED) {
+    localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
   }
 
   scheduleRaidPageSwitch();
 
   handleRaidUnitPrefetch().then(prefetchHandled => {
     if (prefetchHandled) return;
-    if (runBarracksAutoRecruitment()) return;
-    if (runStableAutoRecruitment()) return;
-    if (RAID_CONFIG.autoStart && isRaidAutomationActive() && isScavengePage()) {
+    // Manueller Besuch ohne aktive Automatik: trotzdem rekrutieren (ohne zu navigieren).
+    if (!isRaidAutomationActive()) {
+      runBarracksAutoRecruitment();
+      runStableAutoRecruitment();
+      return;
+    }
+    if (RAID_CONFIG.autoStart && isScavengePage()) {
       startScavengingRaids();
     }
   });
