@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.23
-// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest vor dem Lauf Kaserne und Stall aus, Auto-Truppen-Schalter, Verteilung ueber ALLE aktiven Slots, Start von jeder Seite aus.
+// @version      1.24
+// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest Kaserne und Stall aus, Auto-Truppen-Schalter, Auto-Rekrutierung fuer Kaserne und Stall, Start von jeder Seite aus.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
@@ -110,7 +110,10 @@ const RECRUIT_CONFIG = {
     spear: 0,
     sword: 0,
     axe: 0,
-    archer: 0
+    archer: 0,
+    light: 0,
+    marcher: 0,
+    heavy: 0
   }
 };
 let BOT_PROTECTION_TRIGGERED = false;
@@ -126,6 +129,7 @@ const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
 const RAID_STORED_UNITS_KEY = 'ds_raid_stored_units_v1';
 const RECRUIT_CONFIG_STORAGE_KEY = 'ds_recruit_config_v1';
 const RECRUIT_LAST_ACTION_KEY = 'ds_recruit_last_action_at';
+const RECRUIT_LAST_ACTION_STABLE_KEY = 'ds_recruit_last_action_stable_at';
 const NIGHT_QUEUE_STORAGE_KEY = 'ds_night_queue_v1';
 const NIGHT_CURRENT_LEVELS_STORAGE_KEY = 'ds_night_current_levels_v1';
 const NIGHT_UPGRADE_INFO_STORAGE_KEY = 'ds_night_upgrade_info_v1';
@@ -174,6 +178,8 @@ const RAID_RECRUIT_UNITS_BY_SCREEN = {
   stable: ['light', 'marcher', 'heavy']
 };
 const BARRACKS_RECRUIT_UNITS = ['spear', 'sword', 'axe', 'archer'];
+const STABLE_RECRUIT_UNITS = ['light', 'marcher', 'heavy'];
+const ALL_RECRUIT_UNITS = [...BARRACKS_RECRUIT_UNITS, ...STABLE_RECRUIT_UNITS];
 const NIGHT_BUILDINGS = [
   { key: 'wood', label: 'Holzfaeller' },
   { key: 'stone', label: 'Lehmgrube' },
@@ -337,7 +343,7 @@ function normalizeRecruitConfig(config) {
     units: {}
   };
 
-  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+  ALL_RECRUIT_UNITS.forEach(unit => {
     normalized.units[unit] = Math.max(0, Math.floor(Number(config?.units?.[unit] || 0)));
   });
 
@@ -1434,8 +1440,8 @@ function closeRecruitConfigModal() {
   document.getElementById('ds-recruit-config-backdrop')?.remove();
 }
 
-function buildRecruitConfigRows() {
-  return BARRACKS_RECRUIT_UNITS.map(unit => `
+function buildRecruitConfigRows(units) {
+  return units.map(unit => `
     <tr>
       <th>${RAID_UNIT_LABELS[unit] || unit}</th>
       <td>
@@ -1451,7 +1457,7 @@ function readRecruitConfigFromModal(modal) {
     units: {}
   };
 
-  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+  ALL_RECRUIT_UNITS.forEach(unit => {
     const input = modal.querySelector(`[data-recruit-unit="${unit}"]`);
     snapshot.units[unit] = Math.max(0, Math.floor(Number(input?.value || 0)));
   });
@@ -1487,7 +1493,10 @@ function openRecruitConfigModal() {
             </tr>
           </thead>
           <tbody>
-            ${buildRecruitConfigRows()}
+            <tr><th colspan="2">Kaserne</th></tr>
+            ${buildRecruitConfigRows(BARRACKS_RECRUIT_UNITS)}
+            <tr><th colspan="2">Stall</th></tr>
+            ${buildRecruitConfigRows(STABLE_RECRUIT_UNITS)}
           </tbody>
         </table>
       </div>
@@ -2107,8 +2116,12 @@ function getRecruitAffordableCount(unit) {
   return match ? Number(match[1]) : 0;
 }
 
-function isRecruitCooldownActive() {
-  const lastActionAt = Number(localStorage.getItem(RECRUIT_LAST_ACTION_KEY) || 0);
+function getRecruitLastActionKey(screen = getCurrentScreen()) {
+  return screen === 'stable' ? RECRUIT_LAST_ACTION_STABLE_KEY : RECRUIT_LAST_ACTION_KEY;
+}
+
+function isRecruitCooldownActive(screen = getCurrentScreen()) {
+  const lastActionAt = Number(localStorage.getItem(getRecruitLastActionKey(screen)) || 0);
   return Number.isFinite(lastActionAt) && Date.now() - lastActionAt < RECRUIT_CONFIG.cooldownMs;
 }
 
@@ -2119,9 +2132,9 @@ function setRecruitInputValue(input, value) {
   input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
 }
 
-function runBarracksAutoRecruitment() {
-  if (!RECRUIT_CONFIG.enabled || !isBarracksPage()) return false;
-  if (isRecruitCooldownActive()) return false;
+function runAutoRecruitmentForUnits(units, lastActionKey, screen) {
+  if (!RECRUIT_CONFIG.enabled) return false;
+  if (isRecruitCooldownActive(screen)) return false;
   if (BOT_PROTECTION_TRIGGERED) return false;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return false; }
 
@@ -2131,12 +2144,12 @@ function runBarracksAutoRecruitment() {
 
   let totalQueued = 0;
 
-  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+  units.forEach(unit => {
     const input = getRecruitUnitInput(unit);
     if (input) setRecruitInputValue(input, 0);
   });
 
-  BARRACKS_RECRUIT_UNITS.forEach(unit => {
+  units.forEach(unit => {
     const requested = Math.max(0, Math.floor(Number(RECRUIT_CONFIG.units?.[unit] || 0)));
     if (requested <= 0) return;
 
@@ -2152,12 +2165,22 @@ function runBarracksAutoRecruitment() {
 
   if (totalQueued <= 0) return false;
 
-  localStorage.setItem(RECRUIT_LAST_ACTION_KEY, String(Date.now()));
+  localStorage.setItem(lastActionKey, String(Date.now()));
   const submit = form.querySelector('input[type="submit"], button[type="submit"], .btn-recruit');
   if (submit) submit.click();
   else form.submit();
 
   return true;
+}
+
+function runBarracksAutoRecruitment() {
+  if (!isBarracksPage()) return false;
+  return runAutoRecruitmentForUnits(BARRACKS_RECRUIT_UNITS, RECRUIT_LAST_ACTION_KEY, 'barracks');
+}
+
+function runStableAutoRecruitment() {
+  if (!isStablePage()) return false;
+  return runAutoRecruitmentForUnits(STABLE_RECRUIT_UNITS, RECRUIT_LAST_ACTION_STABLE_KEY, 'stable');
 }
 
 function storeCurrentRaidUnitsFromRecruitPages() {
@@ -2878,11 +2901,18 @@ async function startNightBuilding() {
     localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');  // sonst Prefetch erzwingen
   }
 
+  // Stall im Zyklus: erst rekrutieren (Reload), danach liest der Prefetch die
+  // Stall-Einheiten und wechselt zur Raubzugseite.
+  if (isRaidAutomationActive() && isStablePage() && !BOT_PROTECTION_TRIGGERED) {
+    if (runStableAutoRecruitment()) return;              // rekrutiert -> Seite laedt neu
+  }
+
   scheduleRaidPageSwitch();
 
   handleRaidUnitPrefetch().then(prefetchHandled => {
     if (prefetchHandled) return;
     if (runBarracksAutoRecruitment()) return;
+    if (runStableAutoRecruitment()) return;
     if (RAID_CONFIG.autoStart && isRaidAutomationActive() && isScavengePage()) {
       startScavengingRaids();
     }
