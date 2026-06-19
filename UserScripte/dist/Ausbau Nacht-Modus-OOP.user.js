@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.9
+// @version      0.1.10
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
