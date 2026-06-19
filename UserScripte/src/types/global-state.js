@@ -56,7 +56,6 @@
 
 /**
  * @typedef {Object} TrainingUnitConfig
- * @property {number} amount
  * @property {number} target
  * @property {number} batch
  */

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.13
+// @version      0.1.15
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -602,11 +602,15 @@
       return `
       <tr data-unit="${unit.key}">
         <td>${unit.label}</td>
-        <td><input type="number" min="0" step="1" data-field="amount" value="${numberValue(config.amount)}"></td>
+        <td><span class="ds-training-readonly">${this.formatAvailableTotal(unit.key)}</span></td>
         <td><input type="number" min="0" step="1" data-field="target" value="${numberValue(config.target)}"></td>
         <td><input type="number" min="0" step="1" data-field="batch" value="${numberValue(config.batch)}"></td>
       </tr>
     `;
+    }
+    formatAvailableTotal(unit) {
+      const total = this.state.barracks?.units?.[unit]?.total;
+      return Number.isFinite(Number(total)) ? String(Number(total)) : "n.a.";
     }
     handleClick(event) {
       const action = event.target?.getAttribute?.("data-action");
@@ -630,7 +634,6 @@
       document.querySelectorAll("#ds-training-config-overlay tr[data-unit]").forEach((row) => {
         const unit = row.getAttribute("data-unit");
         units[unit] = {
-          amount: readNumber(row, "amount"),
           target: readNumber(row, "target"),
           batch: readNumber(row, "batch")
         };
@@ -694,6 +697,11 @@
         width: 90px;
         box-sizing: border-box;
       }
+      #ds-training-config-overlay .ds-training-readonly {
+        display: inline-block;
+        min-width: 90px;
+        font-weight: bold;
+      }
       #ds-training-config-overlay button {
         padding: 3px 10px;
         border: 1px solid #8c6d3f;
@@ -715,7 +723,7 @@
   }
   function createEmptyTrainingUnits() {
     return Object.fromEntries(
-      TRAINING_UNITS.map((unit) => [unit.key, { amount: 0, target: 0, batch: 0 }])
+      TRAINING_UNITS.map((unit) => [unit.key, { target: 0, batch: 0 }])
     );
   }
 
