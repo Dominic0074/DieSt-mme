@@ -20,6 +20,26 @@
  */
 
 /**
+ * @typedef {Object} ScavengeSquadState
+ * @property {string} id
+ * @property {string} name
+ * @property {number} returnAt
+ * @property {Object<string, number>} units
+ * @property {number} carryMax
+ * @property {Object<string, number>} loot
+ */
+
+/**
+ * @typedef {Object} ScavengeState
+ * @property {number | null} lastReadAt
+ * @property {Object<string, number>} readyTimes
+ * @property {number | null} nextReadyAt
+ * @property {number} activeCount
+ * @property {Object<string, number>} homeUnits
+ * @property {Object<string, ScavengeSquadState>} squads
+ */
+
+/**
  * @typedef {Object} RecruitState
  * @property {boolean} enabled
  */
@@ -31,6 +51,7 @@
  * @property {PageState} page
  * @property {RuntimeState} runtime
  * @property {RaidState} raid
+ * @property {ScavengeState} scavenge
  * @property {RecruitState} recruit
  */
 

@@ -22,6 +22,14 @@ export function createDefaultState() {
       enabled: true,
       autoStart: false
     },
+    scavenge: {
+      lastReadAt: null,
+      readyTimes: {},
+      nextReadyAt: null,
+      activeCount: 0,
+      homeUnits: {},
+      squads: {}
+    },
     recruit: {
       enabled: false
     }

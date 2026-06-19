@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.5
+// @version      0.1.8
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -30,6 +30,14 @@
       raid: {
         enabled: true,
         autoStart: false
+      },
+      scavenge: {
+        lastReadAt: null,
+        readyTimes: {},
+        nextReadyAt: null,
+        activeCount: 0,
+        homeUnits: {},
+        squads: {}
       },
       recruit: {
         enabled: false
@@ -118,6 +126,197 @@
     }
   };
 
+  // UserScripte/src/storage/storage-service.js
+  var STORAGE_KEY = "dsAuto.readerState.v1";
+  var StorageService = class {
+    loadAll() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : {};
+      } catch (error) {
+        console.warn("[DS Auto] Speicher konnte nicht gelesen werden", error);
+        return {};
+      }
+    }
+    merge(patch) {
+      const current = this.loadAll();
+      const next = deepMerge(current, patch || {});
+      this.saveAll(next);
+      return next;
+    }
+    saveAll(value) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(value || {}));
+      } catch (error) {
+        console.warn("[DS Auto] Speicher konnte nicht geschrieben werden", error);
+      }
+    }
+  };
+  function mergeInto(target, patch) {
+    if (!target || !patch) return target;
+    deepMerge(target, patch);
+    return target;
+  }
+  function deepMerge(target, patch) {
+    Object.entries(patch || {}).forEach(([key, value]) => {
+      if (isPlainObject(value)) {
+        if (!isPlainObject(target[key])) target[key] = {};
+        deepMerge(target[key], value);
+        return;
+      }
+      target[key] = value;
+    });
+    return target;
+  }
+  function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  // UserScripte/src/core/reader-orchestrator.js
+  var ReaderOrchestrator = class {
+    constructor(state, { storage, readers = [], hooks = {} }) {
+      this.state = state;
+      this.storage = storage;
+      this.readers = readers;
+      this.hooks = hooks;
+    }
+    hydrate() {
+      const storedState = this.storage.loadAll();
+      mergeInto(this.state, storedState);
+      this.hooks.onUpdated?.();
+    }
+    readCurrentPage() {
+      if (this.state.runtime.botProtectionTriggered) return null;
+      const patches = this.readers.filter((reader) => reader.supports(this.state.page)).map((reader) => reader.read()).filter(Boolean);
+      if (patches.length === 0) return null;
+      const pagePatch = patches.reduce((result, patch) => mergeInto(result, patch), {});
+      const storedState = this.storage.merge(pagePatch);
+      mergeInto(this.state, storedState);
+      this.hooks.onUpdated?.();
+      return pagePatch;
+    }
+  };
+
+  // UserScripte/src/utils/time.js
+  function parseCountdownMs(text) {
+    const match = (text || "").match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!match) return null;
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const third = match[3] === void 0 ? null : Number(match[3]);
+    if (third === null) return (first * 60 + second) * 1e3;
+    return (first * 60 * 60 + second * 60 + third) * 1e3;
+  }
+  function formatDuration(ms) {
+    if (!Number.isFinite(ms)) return "-";
+    if (ms <= 0) return "jetzt";
+    const totalSeconds = Math.ceil(ms / 1e3);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor(totalSeconds % 3600 / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  }
+
+  // UserScripte/src/readers/scavenge-reader.js
+  var OPTION_NAMES = {
+    1: "Faule Sammler",
+    2: "Bescheidene Sammler",
+    3: "Kluge Sammler",
+    4: "Grossartige Sammler"
+  };
+  var ScavengeReader = class {
+    supports(page) {
+      return page.screen === "place" && page.mode === "scavenge";
+    }
+    read() {
+      const fromGameData = this.readFromGameData();
+      const readyTimes = Object.keys(fromGameData.readyTimes).length > 0 ? fromGameData.readyTimes : this.readFromDom();
+      const nextReadyAt = Object.values(readyTimes).filter((timestamp) => timestamp > Date.now()).sort((a, b) => a - b)[0] || null;
+      return {
+        scavenge: {
+          lastReadAt: Date.now(),
+          readyTimes,
+          nextReadyAt,
+          activeCount: Object.keys(readyTimes).length,
+          homeUnits: fromGameData.homeUnits,
+          squads: fromGameData.squads
+        }
+      };
+    }
+    readFromGameData() {
+      const village = this.getVillageData();
+      const result = {
+        readyTimes: {},
+        homeUnits: {},
+        squads: {}
+      };
+      if (!village) return result;
+      result.homeUnits = village.unit_counts_home || {};
+      Object.entries(village.options || {}).forEach(([optionId, option]) => {
+        const squad = option?.scavenging_squad;
+        if (!squad) return;
+        const timestamp = Number(squad.return_time) * 1e3;
+        if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return;
+        result.readyTimes[optionId] = timestamp;
+        result.squads[optionId] = {
+          id: optionId,
+          name: OPTION_NAMES[optionId] || `Slot ${optionId}`,
+          returnAt: timestamp,
+          units: squad.unit_counts || {},
+          carryMax: Number(squad.carry_max || 0),
+          loot: squad.loot_res || {}
+        };
+      });
+      return result;
+    }
+    getVillageData() {
+      if (window.village?.options) return window.village;
+      const scriptText = Array.from(document.scripts).map((script) => script.textContent || "").find((text) => text.includes("var village =") && text.includes("scavenging_squad"));
+      if (!scriptText) return null;
+      const match = scriptText.match(/var\s+village\s*=\s*(\{[\s\S]*?\});/);
+      if (!match) return null;
+      try {
+        return JSON.parse(match[1]);
+      } catch (error) {
+        console.warn("[DS Auto] Raubzugdaten konnten nicht aus Seiten-JSON gelesen werden", error);
+        return null;
+      }
+    }
+    readFromDom() {
+      const result = {};
+      const options = Array.from(document.querySelectorAll(".scavenge-option"));
+      options.forEach((option, fallbackIndex) => {
+        const optionId = this.getOptionId(option, fallbackIndex);
+        const timestamps = Array.from(option.querySelectorAll(
+          ".return-countdown, .timer, [data-endtime], [data-end-time]"
+        )).map((element) => this.getElementEndTime(element)).filter((timestamp) => timestamp && timestamp > Date.now());
+        if (timestamps.length > 0) result[optionId] = Math.min(...timestamps);
+      });
+      return result;
+    }
+    getOptionId(option, fallbackIndex) {
+      const fromData = option.getAttribute("data-option-id") || option.dataset?.optionId;
+      if (fromData) return String(fromData);
+      const classMatch = option.className.match(/option-(\d+)/);
+      if (classMatch) return classMatch[1];
+      return String(fallbackIndex + 1);
+    }
+    getElementEndTime(element) {
+      const dataValue = element.getAttribute("data-endtime") || element.getAttribute("data-end-time") || element.dataset?.endtime || element.dataset?.endTime;
+      if (dataValue) {
+        const numeric = Number(dataValue);
+        if (Number.isFinite(numeric)) {
+          const timestamp = numeric < 1e10 ? numeric * 1e3 : numeric;
+          if (timestamp > Date.now()) return timestamp;
+        }
+      }
+      const countdownMs = parseCountdownMs(element.textContent || "");
+      return countdownMs ? Date.now() + countdownMs : null;
+    }
+  };
+
   // UserScripte/src/utils/page.js
   function readCurrentPage() {
     const params = new URLSearchParams(window.location.search);
@@ -161,6 +360,10 @@
       <div class="ds-oo-title">DS Auto</div>
       <div class="ds-oo-line"><span>Seite</span><strong data-field="page">-</strong></div>
       <div class="ds-oo-line"><span>Raubzug</span><strong data-field="raid">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 1</span><strong data-field="scavengeSlot1">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 2</span><strong data-field="scavengeSlot2">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 3</span><strong data-field="scavengeSlot3">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 4</span><strong data-field="scavengeSlot4">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
     `;
@@ -171,9 +374,25 @@
     update() {
       if (!this.root) return;
       this.setField("page", this.state.page.name);
-      this.setField("raid", this.state.raid.enabled ? "aktiv" : "aus");
+      this.setField("raid", this.formatRaidStatus());
+      [1, 2, 3, 4].forEach((slot) => {
+        this.setField(`scavengeSlot${slot}`, this.formatScavengeSlot(slot));
+      });
       this.setField("recruit", this.state.recruit.enabled ? "aktiv" : "aus");
       this.setField("status", this.state.runtime.botProtectionTriggered ? "gestoppt" : "ok");
+    }
+    formatRaidStatus() {
+      if (!this.state.raid.enabled) return "aus";
+      const activeCount = this.getActiveReadyEntries().length;
+      return activeCount > 0 ? `${activeCount} unterwegs` : "bereit";
+    }
+    formatScavengeSlot(slot) {
+      const timestamp = Number(this.state.scavenge.readyTimes?.[slot]);
+      if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return "bereit";
+      return formatDuration(timestamp - Date.now());
+    }
+    getActiveReadyEntries() {
+      return Object.entries(this.state.scavenge.readyTimes || {}).map(([slot, timestamp]) => [slot, Number(timestamp)]).filter(([, timestamp]) => Number.isFinite(timestamp) && timestamp > Date.now());
     }
     setField(name, value) {
       const node = this.root?.querySelector(`[data-field="${name}"]`);
@@ -189,7 +408,7 @@
         top: 12px;
         right: 12px;
         z-index: 99999;
-        width: 210px;
+        width: 230px;
         padding: 10px;
         border: 1px solid #6f5635;
         background: rgba(248, 244, 232, 0.96);
@@ -211,11 +430,12 @@
         white-space: nowrap;
       }
       #ds-oo-status-banner .ds-oo-line span {
+        flex: 0 0 auto;
         color: #6f5635;
       }
       #ds-oo-status-banner .ds-oo-line strong {
         overflow: hidden;
-        max-width: 118px;
+        max-width: 128px;
         text-align: right;
         text-overflow: ellipsis;
       }
@@ -228,16 +448,36 @@
   var App = class {
     constructor() {
       this.state = createDefaultState();
+      this.storage = new StorageService();
       this.banner = new StatusBanner(this.state);
       this.botProtection = new BotProtectionService(this.state, {
         onChecked: () => this.banner.update(),
         onTriggered: () => this.banner.update()
       });
+      this.readerOrchestrator = new ReaderOrchestrator(this.state, {
+        storage: this.storage,
+        readers: [
+          new ScavengeReader()
+        ],
+        hooks: {
+          onUpdated: () => this.banner.update()
+        }
+      });
+      this.bannerIntervalId = null;
     }
     start() {
       this.state.page = readCurrentPage();
+      this.readerOrchestrator.hydrate();
       this.banner.mount();
       this.botProtection.start();
+      this.readerOrchestrator.readCurrentPage();
+      this.startBannerTicker();
+    }
+    startBannerTicker() {
+      if (this.bannerIntervalId) return;
+      this.bannerIntervalId = window.setInterval(() => {
+        this.banner.update();
+      }, 1e3);
     }
   };
 

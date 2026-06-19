@@ -1,3 +1,5 @@
+import { formatDuration } from '../utils/time.js';
+
 export class StatusBanner {
   /**
    * @param {import('../types/global-state.js').AppState} state
@@ -22,6 +24,10 @@ export class StatusBanner {
       <div class="ds-oo-title">DS Auto</div>
       <div class="ds-oo-line"><span>Seite</span><strong data-field="page">-</strong></div>
       <div class="ds-oo-line"><span>Raubzug</span><strong data-field="raid">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 1</span><strong data-field="scavengeSlot1">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 2</span><strong data-field="scavengeSlot2">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 3</span><strong data-field="scavengeSlot3">-</strong></div>
+      <div class="ds-oo-line"><span>Slot 4</span><strong data-field="scavengeSlot4">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
     `;
@@ -35,9 +41,30 @@ export class StatusBanner {
     if (!this.root) return;
 
     this.setField('page', this.state.page.name);
-    this.setField('raid', this.state.raid.enabled ? 'aktiv' : 'aus');
+    this.setField('raid', this.formatRaidStatus());
+    [1, 2, 3, 4].forEach(slot => {
+      this.setField(`scavengeSlot${slot}`, this.formatScavengeSlot(slot));
+    });
     this.setField('recruit', this.state.recruit.enabled ? 'aktiv' : 'aus');
     this.setField('status', this.state.runtime.botProtectionTriggered ? 'gestoppt' : 'ok');
+  }
+
+  formatRaidStatus() {
+    if (!this.state.raid.enabled) return 'aus';
+    const activeCount = this.getActiveReadyEntries().length;
+    return activeCount > 0 ? `${activeCount} unterwegs` : 'bereit';
+  }
+
+  formatScavengeSlot(slot) {
+    const timestamp = Number(this.state.scavenge.readyTimes?.[slot]);
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return 'bereit';
+    return formatDuration(timestamp - Date.now());
+  }
+
+  getActiveReadyEntries() {
+    return Object.entries(this.state.scavenge.readyTimes || {})
+      .map(([slot, timestamp]) => [slot, Number(timestamp)])
+      .filter(([, timestamp]) => Number.isFinite(timestamp) && timestamp > Date.now());
   }
 
   setField(name, value) {
@@ -56,7 +83,7 @@ export class StatusBanner {
         top: 12px;
         right: 12px;
         z-index: 99999;
-        width: 210px;
+        width: 230px;
         padding: 10px;
         border: 1px solid #6f5635;
         background: rgba(248, 244, 232, 0.96);
@@ -78,11 +105,12 @@ export class StatusBanner {
         white-space: nowrap;
       }
       #ds-oo-status-banner .ds-oo-line span {
+        flex: 0 0 auto;
         color: #6f5635;
       }
       #ds-oo-status-banner .ds-oo-line strong {
         overflow: hidden;
-        max-width: 118px;
+        max-width: 128px;
         text-align: right;
         text-overflow: ellipsis;
       }
