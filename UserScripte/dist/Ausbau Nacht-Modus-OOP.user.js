@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.4
+// @version      0.1.5
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
-// @match        https://*.die-staemme.de/game.php*
-// @match        https://die-staemme.de/game.php*
+// @match        *://*.die-staemme.de/game.php*
+// @match        *://die-staemme.de/game.php*
 // @grant        none
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/dist/Ausbau%20Nacht-Modus-OOP.user.js
@@ -242,11 +242,13 @@
   };
 
   // UserScripte/src/main.js
+  console.info("[DS Auto] Userscript geladen", window.location.href);
   function startApp() {
     try {
       const app = new App();
       window.dsAutoApp = app;
       app.start();
+      console.info("[DS Auto] App gestartet", app.state.page);
     } catch (error) {
       console.error("[DS Auto] Start fehlgeschlagen", error);
     }
