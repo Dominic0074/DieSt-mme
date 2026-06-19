@@ -24,10 +24,7 @@ export class StatusBanner {
       <div class="ds-oo-title">DS Auto</div>
       <div class="ds-oo-line"><span>Seite</span><strong data-field="page">-</strong></div>
       <div class="ds-oo-line"><span>Raubzug</span><strong data-field="raid">-</strong></div>
-      <div class="ds-oo-line"><span>Slot 1</span><strong data-field="scavengeSlot1">-</strong></div>
-      <div class="ds-oo-line"><span>Slot 2</span><strong data-field="scavengeSlot2">-</strong></div>
-      <div class="ds-oo-line"><span>Slot 3</span><strong data-field="scavengeSlot3">-</strong></div>
-      <div class="ds-oo-line"><span>Slot 4</span><strong data-field="scavengeSlot4">-</strong></div>
+      <div class="ds-oo-line ds-oo-line-top"><span>Fertig</span><strong class="ds-oo-multiline" data-field="scavengeFinished">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
     `;
@@ -42,9 +39,7 @@ export class StatusBanner {
 
     this.setField('page', this.state.page.name);
     this.setField('raid', this.formatRaidStatus());
-    [1, 2, 3, 4].forEach(slot => {
-      this.setField(`scavengeSlot${slot}`, this.formatScavengeSlot(slot));
-    });
+    this.setField('scavengeFinished', this.formatScavengeFinished());
     this.setField('recruit', this.state.recruit.enabled ? 'aktiv' : 'aus');
     this.setField('status', this.state.runtime.botProtectionTriggered ? 'gestoppt' : 'ok');
   }
@@ -55,10 +50,18 @@ export class StatusBanner {
     return activeCount > 0 ? `${activeCount} unterwegs` : 'bereit';
   }
 
-  formatScavengeSlot(slot) {
+  formatScavengeFinished() {
+    const lines = [1, 2, 3, 4]
+      .map(slot => this.formatScavengeSlotLine(slot))
+      .filter(Boolean);
+
+    return lines.length > 0 ? lines.join('\n') : '-';
+  }
+
+  formatScavengeSlotLine(slot) {
     const timestamp = Number(this.state.scavenge.readyTimes?.[slot]);
-    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return 'bereit';
-    return formatDuration(timestamp - Date.now());
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return null;
+    return `${slot}: ${formatDuration(timestamp - Date.now())}`;
   }
 
   getActiveReadyEntries() {
@@ -104,6 +107,9 @@ export class StatusBanner {
         line-height: 1.55;
         white-space: nowrap;
       }
+      #ds-oo-status-banner .ds-oo-line-top {
+        align-items: flex-start;
+      }
       #ds-oo-status-banner .ds-oo-line span {
         flex: 0 0 auto;
         color: #6f5635;
@@ -113,6 +119,10 @@ export class StatusBanner {
         max-width: 128px;
         text-align: right;
         text-overflow: ellipsis;
+      }
+      #ds-oo-status-banner .ds-oo-multiline {
+        white-space: pre-line;
+        line-height: 1.35;
       }
     `;
     document.head.appendChild(style);
