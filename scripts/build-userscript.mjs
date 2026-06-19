@@ -49,8 +49,10 @@ function buildUserscriptHeader(version) {
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
 // @grant        none
+// @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/dist/Ausbau%20Nacht-Modus-OOP.user.js
 // @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/UserScripte/dist/Ausbau%20Nacht-Modus-OOP.user.js
 // ==/UserScript==
 `;
 }
+
