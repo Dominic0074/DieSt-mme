@@ -27,6 +27,7 @@ export class StatusBanner {
       <div class="ds-oo-line ds-oo-line-top"><span>Fertig</span><strong class="ds-oo-multiline" data-field="scavengeFinished">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
+      <div class="ds-oo-actions"><button type="button" data-action="training-config">Ausbildung</button></div>
     `;
 
     document.body.appendChild(root);
@@ -42,6 +43,13 @@ export class StatusBanner {
     this.setField('scavengeFinished', this.formatScavengeFinished());
     this.setField('recruit', this.state.recruit.enabled ? 'aktiv' : 'aus');
     this.setField('status', this.state.runtime.botProtectionTriggered ? 'gestoppt' : 'ok');
+  }
+
+  onConfigureTraining(callback) {
+    this.root?.addEventListener('click', event => {
+      if (!event.target?.matches?.('[data-action="training-config"]')) return;
+      callback?.();
+    });
   }
 
   formatRaidStatus() {
@@ -123,6 +131,18 @@ export class StatusBanner {
       #ds-oo-status-banner .ds-oo-multiline {
         white-space: pre-line;
         line-height: 1.35;
+      }
+      #ds-oo-status-banner .ds-oo-actions {
+        margin-top: 8px;
+        text-align: right;
+      }
+      #ds-oo-status-banner button {
+        padding: 2px 8px;
+        border: 1px solid #8c6d3f;
+        background: #f5e6bd;
+        color: #2f2417;
+        font: 12px Arial, sans-serif;
+        cursor: pointer;
       }
     `;
     document.head.appendChild(style);

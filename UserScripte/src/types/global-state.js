@@ -40,6 +40,33 @@
  */
 
 /**
+ * @typedef {Object} BarracksUnitState
+ * @property {number} inVillage
+ * @property {number} total
+ * @property {number} maxRecruitable
+ * @property {{ wood: number, stone: number, iron: number, population: number }} costs
+ * @property {string} buildTime
+ */
+
+/**
+ * @typedef {Object} BarracksState
+ * @property {number | null} lastReadAt
+ * @property {Object<string, BarracksUnitState>} units
+ */
+
+/**
+ * @typedef {Object} TrainingUnitConfig
+ * @property {number} amount
+ * @property {number} target
+ * @property {number} batch
+ */
+
+/**
+ * @typedef {Object} TrainingState
+ * @property {Object<string, TrainingUnitConfig>} units
+ */
+
+/**
  * @typedef {Object} RecruitState
  * @property {boolean} enabled
  */
@@ -52,6 +79,8 @@
  * @property {RuntimeState} runtime
  * @property {RaidState} raid
  * @property {ScavengeState} scavenge
+ * @property {BarracksState} barracks
+ * @property {TrainingState} training
  * @property {RecruitState} recruit
  */
 

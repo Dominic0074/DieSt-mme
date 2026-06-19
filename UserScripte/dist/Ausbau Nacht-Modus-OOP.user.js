@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.10
+// @version      0.1.13
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -38,6 +38,13 @@
         activeCount: 0,
         homeUnits: {},
         squads: {}
+      },
+      barracks: {
+        lastReadAt: null,
+        units: {}
+      },
+      training: {
+        units: {}
       },
       recruit: {
         enabled: false
@@ -196,6 +203,78 @@
       return pagePatch;
     }
   };
+
+  // UserScripte/src/readers/barracks-reader.js
+  var BARRACKS_UNITS = ["spear", "sword", "axe", "archer"];
+  var BarracksReader = class {
+    supports(page) {
+      return page.screen === "barracks";
+    }
+    read() {
+      const units = {};
+      BARRACKS_UNITS.forEach((unit) => {
+        const row = this.getUnitRow(unit);
+        if (!row) return;
+        units[unit] = this.readUnit(row, unit);
+      });
+      return {
+        barracks: {
+          lastReadAt: Date.now(),
+          units
+        }
+      };
+    }
+    getUnitRow(unit) {
+      const input = document.querySelector(`#train_form input[name="${unit}"], #train_form input[data-unit="${unit}"]`);
+      if (input) return input.closest("tr");
+      const unitLink = document.querySelector(`#train_form .unit_link[data-unit="${unit}"]`);
+      return unitLink?.closest("tr") || null;
+    }
+    readUnit(row, unit) {
+      const counts = this.readUnitCounts(row);
+      return {
+        inVillage: counts.inVillage,
+        total: counts.total,
+        maxRecruitable: this.readMaxRecruitable(row, unit),
+        costs: this.readCosts(unit),
+        buildTime: this.readText(`#${unit}_0_cost_time`)
+      };
+    }
+    readUnitCounts(row) {
+      const countCell = row.querySelector("td:nth-child(3)");
+      const text = countCell?.textContent || "";
+      const match = text.match(/([\d.]+)\s*\/\s*([\d.]+)/);
+      if (!match) {
+        const value = parseCompactNumber(text);
+        return { inVillage: value, total: value };
+      }
+      return {
+        inVillage: parseCompactNumber(match[1]),
+        total: parseCompactNumber(match[2])
+      };
+    }
+    readMaxRecruitable(row, unit) {
+      const link = row.querySelector(`#${unit}_0_a`) || row.querySelector('a[href*="set_max"]');
+      const match = (link?.textContent || "").match(/\((\d+)\)/);
+      return match ? Number(match[1]) : 0;
+    }
+    readCosts(unit) {
+      return {
+        wood: parseCompactNumber(this.readText(`#${unit}_0_cost_wood`)),
+        stone: parseCompactNumber(this.readText(`#${unit}_0_cost_stone`)),
+        iron: parseCompactNumber(this.readText(`#${unit}_0_cost_iron`)),
+        population: parseCompactNumber(this.readText(`#${unit}_0_cost_pop`))
+      };
+    }
+    readText(selector) {
+      return document.querySelector(selector)?.textContent?.trim() || "";
+    }
+  };
+  function parseCompactNumber(value) {
+    const normalized = String(value || "").replace(/\./g, "").replace(/[^\d-]/g, "");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
 
   // UserScripte/src/utils/time.js
   function parseCountdownMs(text) {
@@ -363,6 +442,7 @@
       <div class="ds-oo-line ds-oo-line-top"><span>Fertig</span><strong class="ds-oo-multiline" data-field="scavengeFinished">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
+      <div class="ds-oo-actions"><button type="button" data-action="training-config">Ausbildung</button></div>
     `;
       document.body.appendChild(root);
       this.root = root;
@@ -375,6 +455,12 @@
       this.setField("scavengeFinished", this.formatScavengeFinished());
       this.setField("recruit", this.state.recruit.enabled ? "aktiv" : "aus");
       this.setField("status", this.state.runtime.botProtectionTriggered ? "gestoppt" : "ok");
+    }
+    onConfigureTraining(callback) {
+      this.root?.addEventListener("click", (event) => {
+        if (!event.target?.matches?.('[data-action="training-config"]')) return;
+        callback?.();
+      });
     }
     formatRaidStatus() {
       if (!this.state.raid.enabled) return "aus";
@@ -445,10 +531,193 @@
         white-space: pre-line;
         line-height: 1.35;
       }
+      #ds-oo-status-banner .ds-oo-actions {
+        margin-top: 8px;
+        text-align: right;
+      }
+      #ds-oo-status-banner button {
+        padding: 2px 8px;
+        border: 1px solid #8c6d3f;
+        background: #f5e6bd;
+        color: #2f2417;
+        font: 12px Arial, sans-serif;
+        cursor: pointer;
+      }
     `;
       document.head.appendChild(style);
     }
   };
+
+  // UserScripte/src/ui/training-config-modal.js
+  var TRAINING_UNITS = [
+    { key: "spear", label: "Speer" },
+    { key: "sword", label: "Schwert" },
+    { key: "axe", label: "Axt" },
+    { key: "archer", label: "Bogen" }
+  ];
+  var TrainingConfigModal = class {
+    constructor(state, storage, hooks = {}) {
+      this.state = state;
+      this.storage = storage;
+      this.hooks = hooks;
+    }
+    open() {
+      this.close();
+      this.injectStyle();
+      const overlay = document.createElement("div");
+      overlay.id = "ds-training-config-overlay";
+      overlay.innerHTML = `
+      <div class="ds-training-modal">
+        <div class="ds-training-header">
+          <strong>Ausbildungs-Konfiguration</strong>
+          <button type="button" data-action="close">Schliessen</button>
+        </div>
+        <table class="ds-training-table">
+          <thead>
+            <tr>
+              <th>Art</th>
+              <th>Anzahl</th>
+              <th>Ziel</th>
+              <th>Charge</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${TRAINING_UNITS.map((unit) => this.renderRow(unit)).join("")}
+          </tbody>
+        </table>
+        <div class="ds-training-actions">
+          <button type="button" data-action="reset">Zuruecksetzen</button>
+          <button type="button" data-action="save">Speichern</button>
+        </div>
+      </div>
+    `;
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", (event) => this.handleClick(event));
+    }
+    close() {
+      document.getElementById("ds-training-config-overlay")?.remove();
+    }
+    renderRow(unit) {
+      const config = this.state.training?.units?.[unit.key] || {};
+      return `
+      <tr data-unit="${unit.key}">
+        <td>${unit.label}</td>
+        <td><input type="number" min="0" step="1" data-field="amount" value="${numberValue(config.amount)}"></td>
+        <td><input type="number" min="0" step="1" data-field="target" value="${numberValue(config.target)}"></td>
+        <td><input type="number" min="0" step="1" data-field="batch" value="${numberValue(config.batch)}"></td>
+      </tr>
+    `;
+    }
+    handleClick(event) {
+      const action = event.target?.getAttribute?.("data-action");
+      if (!action) return;
+      if (action === "close") {
+        this.close();
+        return;
+      }
+      if (action === "reset") {
+        this.save({ units: createEmptyTrainingUnits() });
+        this.open();
+        return;
+      }
+      if (action === "save") {
+        this.save(this.readForm());
+        this.close();
+      }
+    }
+    readForm() {
+      const units = {};
+      document.querySelectorAll("#ds-training-config-overlay tr[data-unit]").forEach((row) => {
+        const unit = row.getAttribute("data-unit");
+        units[unit] = {
+          amount: readNumber(row, "amount"),
+          target: readNumber(row, "target"),
+          batch: readNumber(row, "batch")
+        };
+      });
+      return { units };
+    }
+    save(trainingConfig) {
+      const patch = {
+        training: trainingConfig
+      };
+      this.storage.merge(patch);
+      this.state.training = trainingConfig;
+      this.hooks.onSaved?.();
+    }
+    injectStyle() {
+      if (document.getElementById("ds-training-config-style")) return;
+      const style = document.createElement("style");
+      style.id = "ds-training-config-style";
+      style.textContent = `
+      #ds-training-config-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100000;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 80px;
+        background: rgba(0, 0, 0, 0.35);
+      }
+      #ds-training-config-overlay .ds-training-modal {
+        width: 520px;
+        border: 1px solid #8c6d3f;
+        background: #f4e4bc;
+        color: #2f2417;
+        font: 12px Arial, sans-serif;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      }
+      #ds-training-config-overlay .ds-training-header,
+      #ds-training-config-overlay .ds-training-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px;
+      }
+      #ds-training-config-overlay .ds-training-table {
+        width: calc(100% - 16px);
+        margin: 0 8px 8px;
+        border-collapse: collapse;
+      }
+      #ds-training-config-overlay th,
+      #ds-training-config-overlay td {
+        padding: 5px;
+        border: 1px solid #c7a96b;
+        text-align: left;
+      }
+      #ds-training-config-overlay th {
+        background: #c2a35f;
+        color: #3b2414;
+      }
+      #ds-training-config-overlay input {
+        width: 90px;
+        box-sizing: border-box;
+      }
+      #ds-training-config-overlay button {
+        padding: 3px 10px;
+        border: 1px solid #8c6d3f;
+        background: #f8edcf;
+        color: #2f2417;
+        cursor: pointer;
+      }
+    `;
+      document.head.appendChild(style);
+    }
+  };
+  function readNumber(row, field) {
+    const value = Number(row.querySelector(`[data-field="${field}"]`)?.value || 0);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  }
+  function numberValue(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) && number > 0 ? String(Math.floor(number)) : "0";
+  }
+  function createEmptyTrainingUnits() {
+    return Object.fromEntries(
+      TRAINING_UNITS.map((unit) => [unit.key, { amount: 0, target: 0, batch: 0 }])
+    );
+  }
 
   // UserScripte/src/app.js
   var App = class {
@@ -456,6 +725,9 @@
       this.state = createDefaultState();
       this.storage = new StorageService();
       this.banner = new StatusBanner(this.state);
+      this.trainingConfigModal = new TrainingConfigModal(this.state, this.storage, {
+        onSaved: () => this.banner.update()
+      });
       this.botProtection = new BotProtectionService(this.state, {
         onChecked: () => this.banner.update(),
         onTriggered: () => this.banner.update()
@@ -463,7 +735,8 @@
       this.readerOrchestrator = new ReaderOrchestrator(this.state, {
         storage: this.storage,
         readers: [
-          new ScavengeReader()
+          new ScavengeReader(),
+          new BarracksReader()
         ],
         hooks: {
           onUpdated: () => this.banner.update()
@@ -475,6 +748,7 @@
       this.state.page = readCurrentPage();
       this.readerOrchestrator.hydrate();
       this.banner.mount();
+      this.banner.onConfigureTraining(() => this.trainingConfigModal.open());
       this.botProtection.start();
       this.readerOrchestrator.readCurrentPage();
       this.startBannerTicker();

@@ -30,6 +30,13 @@ export function createDefaultState() {
       homeUnits: {},
       squads: {}
     },
+    barracks: {
+      lastReadAt: null,
+      units: {}
+    },
+    training: {
+      units: {}
+    },
     recruit: {
       enabled: false
     }
