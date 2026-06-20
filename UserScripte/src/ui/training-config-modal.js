@@ -2,7 +2,11 @@ const TRAINING_UNITS = [
   { key: 'spear', label: 'Speer' },
   { key: 'sword', label: 'Schwert' },
   { key: 'axe', label: 'Axt' },
-  { key: 'archer', label: 'Bogen' }
+  { key: 'archer', label: 'Bogen' },
+  { key: 'spy', label: 'Spaeher' },
+  { key: 'light', label: 'LKav' },
+  { key: 'marcher', label: 'Beritt. Bogen' },
+  { key: 'heavy', label: 'SKav' }
 ];
 
 export class TrainingConfigModal {
@@ -24,6 +28,10 @@ export class TrainingConfigModal {
           <strong>Ausbildungs-Konfiguration</strong>
           <button type="button" data-action="close">Schliessen</button>
         </div>
+        <label class="ds-training-toggle">
+          <input type="checkbox" data-field="recruit-enabled" ${this.state.recruit.enabled ? 'checked' : ''}>
+          <span>Auto-Rekrutierung aktiv</span>
+        </label>
         <table class="ds-training-table">
           <thead>
             <tr>
@@ -66,7 +74,7 @@ export class TrainingConfigModal {
   }
 
   formatAvailableTotal(unit) {
-    const total = this.state.barracks?.units?.[unit]?.total;
+    const total = this.state.barracks?.units?.[unit]?.total ?? this.state.stable?.units?.[unit]?.total;
     return Number.isFinite(Number(total)) ? String(Number(total)) : 'n.a.';
   }
 
@@ -80,7 +88,7 @@ export class TrainingConfigModal {
     }
 
     if (action === 'reset') {
-      this.save({ units: createEmptyTrainingUnits() });
+      this.save({ enabled: false, training: { units: createEmptyTrainingUnits() } });
       this.open();
       return;
     }
@@ -102,16 +110,23 @@ export class TrainingConfigModal {
       };
     });
 
-    return { units };
+    return {
+      enabled: Boolean(document.querySelector('#ds-training-config-overlay [data-field="recruit-enabled"]')?.checked),
+      training: { units }
+    };
   }
 
-  save(trainingConfig) {
+  save(config) {
     const patch = {
-      training: trainingConfig
+      recruit: {
+        enabled: config.enabled
+      },
+      training: config.training
     };
 
     this.storage.merge(patch);
-    this.state.training = trainingConfig;
+    this.state.recruit.enabled = config.enabled;
+    this.state.training = config.training;
     this.hooks.onSaved?.();
   }
 
@@ -132,7 +147,7 @@ export class TrainingConfigModal {
         background: rgba(0, 0, 0, 0.35);
       }
       #ds-training-config-overlay .ds-training-modal {
-        width: 520px;
+        width: 620px;
         border: 1px solid #8c6d3f;
         background: #f4e4bc;
         color: #2f2417;
@@ -145,6 +160,13 @@ export class TrainingConfigModal {
         align-items: center;
         justify-content: space-between;
         padding: 8px;
+      }
+      #ds-training-config-overlay .ds-training-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 8px 8px;
+        font-weight: bold;
       }
       #ds-training-config-overlay .ds-training-table {
         width: calc(100% - 16px);
@@ -161,7 +183,7 @@ export class TrainingConfigModal {
         background: #c2a35f;
         color: #3b2414;
       }
-      #ds-training-config-overlay input {
+      #ds-training-config-overlay input[type="number"] {
         width: 90px;
         box-sizing: border-box;
       }

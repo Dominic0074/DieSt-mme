@@ -40,7 +40,7 @@
  */
 
 /**
- * @typedef {Object} BarracksUnitState
+ * @typedef {Object} TrainingBuildingUnitState
  * @property {number} inVillage
  * @property {number} total
  * @property {number} maxRecruitable
@@ -51,7 +51,13 @@
 /**
  * @typedef {Object} BarracksState
  * @property {number | null} lastReadAt
- * @property {Object<string, BarracksUnitState>} units
+ * @property {Object<string, TrainingBuildingUnitState>} units
+ */
+
+/**
+ * @typedef {Object} StableState
+ * @property {number | null} lastReadAt
+ * @property {Object<string, TrainingBuildingUnitState>} units
  */
 
 /**
@@ -79,6 +85,7 @@
  * @property {RaidState} raid
  * @property {ScavengeState} scavenge
  * @property {BarracksState} barracks
+ * @property {StableState} stable
  * @property {TrainingState} training
  * @property {RecruitState} recruit
  */

@@ -34,6 +34,10 @@ export function createDefaultState() {
       lastReadAt: null,
       units: {}
     },
+    stable: {
+      lastReadAt: null,
+      units: {}
+    },
     training: {
       units: {}
     },

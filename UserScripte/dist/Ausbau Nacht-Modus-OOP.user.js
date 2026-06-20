@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.16
+// @version      0.1.17
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -40,6 +40,10 @@
         squads: {}
       },
       barracks: {
+        lastReadAt: null,
+        units: {}
+      },
+      stable: {
         lastReadAt: null,
         units: {}
       },
@@ -396,6 +400,78 @@
     }
   };
 
+  // UserScripte/src/readers/stable-reader.js
+  var STABLE_UNITS = ["spy", "light", "marcher", "heavy"];
+  var StableReader = class {
+    supports(page) {
+      return page.screen === "stable";
+    }
+    read() {
+      const units = {};
+      STABLE_UNITS.forEach((unit) => {
+        const row = this.getUnitRow(unit);
+        if (!row) return;
+        units[unit] = this.readUnit(row, unit);
+      });
+      return {
+        stable: {
+          lastReadAt: Date.now(),
+          units
+        }
+      };
+    }
+    getUnitRow(unit) {
+      const input = document.querySelector(`#train_form input[name="${unit}"], #train_form input[data-unit="${unit}"]`);
+      if (input) return input.closest("tr");
+      const unitLink = document.querySelector(`#train_form .unit_link[data-unit="${unit}"]`);
+      return unitLink?.closest("tr") || null;
+    }
+    readUnit(row, unit) {
+      const counts = this.readUnitCounts(row);
+      return {
+        inVillage: counts.inVillage,
+        total: counts.total,
+        maxRecruitable: this.readMaxRecruitable(row, unit),
+        costs: this.readCosts(unit),
+        buildTime: this.readText(`#${unit}_0_cost_time`)
+      };
+    }
+    readUnitCounts(row) {
+      const countCell = row.querySelector("td:nth-child(3)");
+      const text = countCell?.textContent || "";
+      const match = text.match(/([\d.]+)\s*\/\s*([\d.]+)/);
+      if (!match) {
+        const value = parseCompactNumber2(text);
+        return { inVillage: value, total: value };
+      }
+      return {
+        inVillage: parseCompactNumber2(match[1]),
+        total: parseCompactNumber2(match[2])
+      };
+    }
+    readMaxRecruitable(row, unit) {
+      const link = row.querySelector(`#${unit}_0_a`) || row.querySelector('a[href*="set_max"]');
+      const match = (link?.textContent || "").match(/\((\d+)\)/);
+      return match ? Number(match[1]) : 0;
+    }
+    readCosts(unit) {
+      return {
+        wood: parseCompactNumber2(this.readText(`#${unit}_0_cost_wood`)),
+        stone: parseCompactNumber2(this.readText(`#${unit}_0_cost_stone`)),
+        iron: parseCompactNumber2(this.readText(`#${unit}_0_cost_iron`)),
+        population: parseCompactNumber2(this.readText(`#${unit}_0_cost_pop`))
+      };
+    }
+    readText(selector) {
+      return document.querySelector(selector)?.textContent?.trim() || "";
+    }
+  };
+  function parseCompactNumber2(value) {
+    const normalized = String(value || "").replace(/\./g, "").replace(/[^\d-]/g, "");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   // UserScripte/src/utils/page.js
   function readCurrentPage() {
     const params = new URLSearchParams(window.location.search);
@@ -553,7 +629,11 @@
     { key: "spear", label: "Speer" },
     { key: "sword", label: "Schwert" },
     { key: "axe", label: "Axt" },
-    { key: "archer", label: "Bogen" }
+    { key: "archer", label: "Bogen" },
+    { key: "spy", label: "Spaeher" },
+    { key: "light", label: "LKav" },
+    { key: "marcher", label: "Beritt. Bogen" },
+    { key: "heavy", label: "SKav" }
   ];
   var TrainingConfigModal = class {
     constructor(state, storage, hooks = {}) {
@@ -572,6 +652,10 @@
           <strong>Ausbildungs-Konfiguration</strong>
           <button type="button" data-action="close">Schliessen</button>
         </div>
+        <label class="ds-training-toggle">
+          <input type="checkbox" data-field="recruit-enabled" ${this.state.recruit.enabled ? "checked" : ""}>
+          <span>Auto-Rekrutierung aktiv</span>
+        </label>
         <table class="ds-training-table">
           <thead>
             <tr>
@@ -609,7 +693,7 @@
     `;
     }
     formatAvailableTotal(unit) {
-      const total = this.state.barracks?.units?.[unit]?.total;
+      const total = this.state.barracks?.units?.[unit]?.total ?? this.state.stable?.units?.[unit]?.total;
       return Number.isFinite(Number(total)) ? String(Number(total)) : "n.a.";
     }
     handleClick(event) {
@@ -620,7 +704,7 @@
         return;
       }
       if (action === "reset") {
-        this.save({ units: createEmptyTrainingUnits() });
+        this.save({ enabled: false, training: { units: createEmptyTrainingUnits() } });
         this.open();
         return;
       }
@@ -638,14 +722,21 @@
           batch: readNumber(row, "batch")
         };
       });
-      return { units };
+      return {
+        enabled: Boolean(document.querySelector('#ds-training-config-overlay [data-field="recruit-enabled"]')?.checked),
+        training: { units }
+      };
     }
-    save(trainingConfig) {
+    save(config) {
       const patch = {
-        training: trainingConfig
+        recruit: {
+          enabled: config.enabled
+        },
+        training: config.training
       };
       this.storage.merge(patch);
-      this.state.training = trainingConfig;
+      this.state.recruit.enabled = config.enabled;
+      this.state.training = config.training;
       this.hooks.onSaved?.();
     }
     injectStyle() {
@@ -664,7 +755,7 @@
         background: rgba(0, 0, 0, 0.35);
       }
       #ds-training-config-overlay .ds-training-modal {
-        width: 520px;
+        width: 620px;
         border: 1px solid #8c6d3f;
         background: #f4e4bc;
         color: #2f2417;
@@ -677,6 +768,13 @@
         align-items: center;
         justify-content: space-between;
         padding: 8px;
+      }
+      #ds-training-config-overlay .ds-training-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 8px 8px;
+        font-weight: bold;
       }
       #ds-training-config-overlay .ds-training-table {
         width: calc(100% - 16px);
@@ -693,7 +791,7 @@
         background: #c2a35f;
         color: #3b2414;
       }
-      #ds-training-config-overlay input {
+      #ds-training-config-overlay input[type="number"] {
         width: 90px;
         box-sizing: border-box;
       }
@@ -744,7 +842,8 @@
         storage: this.storage,
         readers: [
           new ScavengeReader(),
-          new BarracksReader()
+          new BarracksReader(),
+          new StableReader()
         ],
         hooks: {
           onUpdated: () => this.banner.update()

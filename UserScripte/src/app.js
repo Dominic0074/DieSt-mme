@@ -3,6 +3,7 @@ import { BotProtectionService } from './core/bot-protection-service.js';
 import { ReaderOrchestrator } from './core/reader-orchestrator.js';
 import { BarracksReader } from './readers/barracks-reader.js';
 import { ScavengeReader } from './readers/scavenge-reader.js';
+import { StableReader } from './readers/stable-reader.js';
 import { StorageService } from './storage/storage-service.js';
 import { readCurrentPage } from './utils/page.js';
 import { StatusBanner } from './ui/status-banner.js';
@@ -24,7 +25,8 @@ export class App {
       storage: this.storage,
       readers: [
         new ScavengeReader(),
-        new BarracksReader()
+        new BarracksReader(),
+        new StableReader()
       ],
       hooks: {
         onUpdated: () => this.banner.update()
