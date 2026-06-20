@@ -20,6 +20,14 @@
  */
 
 /**
+ * @typedef {Object} ResourceCostState
+ * @property {number} wood
+ * @property {number} stone
+ * @property {number} iron
+ * @property {number} population
+ */
+
+/**
  * @typedef {Object} ScavengeSquadState
  * @property {string} id
  * @property {string} name
@@ -44,7 +52,7 @@
  * @property {number} inVillage
  * @property {number} total
  * @property {number} maxRecruitable
- * @property {{ wood: number, stone: number, iron: number, population: number }} costs
+ * @property {ResourceCostState} costs
  * @property {string} buildTime
  */
 
@@ -72,10 +80,25 @@
  */
 
 /**
+ * @typedef {Object} BuildingUpgradeInfoState
+ * @property {string} name
+ * @property {number} level
+ * @property {number} nextLevel
+ * @property {number} maxLevel
+ * @property {boolean} canBuild
+ * @property {string | null} error
+ * @property {number | null} forecastAt
+ * @property {ResourceCostState} costs
+ * @property {ResourceCostState} factors
+ * @property {number} buildTimeSeconds
+ */
+
+/**
  * @typedef {Object} MainBuildingState
  * @property {number | null} lastReadAt
  * @property {Object<string, number>} levels
  * @property {BuildQueueEntryState[]} queue
+ * @property {Object<string, BuildingUpgradeInfoState>} upgradeInfo
  */
 
 /**
@@ -84,6 +107,8 @@
  * @property {string} building
  * @property {string} name
  * @property {number} targetLevel
+ * @property {ResourceCostState | null} costs
+ * @property {boolean} costsEstimated
  * @property {number} createdAt
  */
 

@@ -41,7 +41,8 @@ export function createDefaultState() {
     mainBuilding: {
       lastReadAt: null,
       levels: {},
-      queue: []
+      queue: [],
+      upgradeInfo: {}
     },
     buildPlan: {
       queue: []

@@ -94,13 +94,14 @@ export class BuildConfigModal {
 
     return `
       <table class="ds-build-table">
-        <thead><tr><th>#</th><th>Gebaeude</th><th>Ziel</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Gebaeude</th><th>Ziel</th><th>Kosten</th><th></th></tr></thead>
         <tbody>
           ${queue.map((item, index) => `
             <tr>
               <td>${index + 1}</td>
               <td>${this.getBuildingLabel(item.building, item.name)}</td>
               <td>${formatLevel(item.targetLevel)}</td>
+              <td>${formatCosts(item.costs)}${item.costsEstimated ? ' *' : ''}</td>
               <td><button type="button" data-action="remove-plan" data-id="${item.id}">Entfernen</button></td>
             </tr>
           `).join('')}
@@ -115,15 +116,17 @@ export class BuildConfigModal {
 
     return `
       <table class="ds-build-table">
-        <thead><tr><th>Gebaeude</th><th>Level</th><th>Naechstes Upgrade</th><th></th></tr></thead>
+        <thead><tr><th>Gebaeude</th><th>Level</th><th>Naechstes Upgrade</th><th>Kosten</th><th></th></tr></thead>
         <tbody>
           ${buildings.map(building => {
             const nextLevel = this.getNextTargetLevel(building);
+            const costs = this.getUpgradeCosts(building, nextLevel);
             return `
               <tr>
                 <td>${this.getBuildingLabel(building)}</td>
                 <td>${this.getBaseLevel(building)}</td>
                 <td>${formatLevel(nextLevel)}</td>
+                <td>${formatCosts(costs.costs)}${costs.estimated ? ' *' : ''}</td>
                 <td><button type="button" data-action="add-upgrade" data-building="${building}">Upgrade</button></td>
               </tr>
             `;
@@ -166,11 +169,16 @@ export class BuildConfigModal {
     if (!building) return;
 
     const queue = this.getPlannedQueue();
+    const targetLevel = this.getNextTargetLevel(building);
+    const costs = this.getUpgradeCosts(building, targetLevel);
+
     queue.push({
       id: `${building}-${Date.now()}-${queue.length}`,
       building,
       name: this.getBuildingLabel(building),
-      targetLevel: this.getNextTargetLevel(building),
+      targetLevel,
+      costs: costs.costs,
+      costsEstimated: costs.estimated,
       createdAt: Date.now()
     });
     this.savePlan(queue);
@@ -180,6 +188,30 @@ export class BuildConfigModal {
     const baseLevel = this.getBaseLevel(building);
     const queuedLevel = this.getHighestQueuedLevel(building);
     return Math.max(baseLevel, queuedLevel) + 1;
+  }
+
+  getUpgradeCosts(building, targetLevel) {
+    const info = this.state.mainBuilding?.upgradeInfo?.[building];
+    if (!info?.costs) return { costs: null, estimated: false };
+
+    if (Number(info.nextLevel) === Number(targetLevel)) {
+      return { costs: info.costs, estimated: false };
+    }
+
+    const levelDiff = Number(targetLevel) - Number(info.nextLevel || targetLevel);
+    if (!Number.isFinite(levelDiff) || levelDiff < 0) {
+      return { costs: info.costs, estimated: true };
+    }
+
+    return {
+      costs: {
+        wood: estimateCost(info.costs.wood, info.factors?.wood, levelDiff),
+        stone: estimateCost(info.costs.stone, info.factors?.stone, levelDiff),
+        iron: estimateCost(info.costs.iron, info.factors?.iron, levelDiff),
+        population: estimateCost(info.costs.population, info.factors?.population, levelDiff)
+      },
+      estimated: levelDiff > 0
+    };
   }
 
   getHighestQueuedLevel(building) {
@@ -247,7 +279,7 @@ export class BuildConfigModal {
         background: rgba(0, 0, 0, 0.35);
       }
       #ds-build-config-overlay .ds-build-modal {
-        width: min(760px, calc(100vw - 32px));
+        width: min(860px, calc(100vw - 32px));
         max-height: calc(100vh - 96px);
         overflow: auto;
         border: 1px solid #8c6d3f;
@@ -304,4 +336,27 @@ export class BuildConfigModal {
 function formatLevel(level) {
   const number = Number(level);
   return Number.isFinite(number) && number > 0 ? `Stufe ${number}` : '-';
+}
+
+function formatCosts(costs) {
+  if (!costs) return '-';
+
+  return [
+    `H ${formatNumber(costs.wood)}`,
+    `L ${formatNumber(costs.stone)}`,
+    `E ${formatNumber(costs.iron)}`,
+    `B ${formatNumber(costs.population)}`
+  ].join(' | ');
+}
+
+function formatNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toLocaleString('de-DE') : '0';
+}
+
+function estimateCost(baseCost, factor, levelDiff) {
+  const cost = Number(baseCost || 0);
+  const costFactor = Number(factor || 1);
+  if (!Number.isFinite(cost) || !Number.isFinite(costFactor)) return 0;
+  return Math.round(cost * Math.pow(costFactor, levelDiff));
 }
