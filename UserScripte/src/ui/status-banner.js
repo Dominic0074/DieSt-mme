@@ -27,7 +27,10 @@ export class StatusBanner {
       <div class="ds-oo-line ds-oo-line-top"><span>Fertig</span><strong class="ds-oo-multiline" data-field="scavengeFinished">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
-      <div class="ds-oo-actions"><button type="button" data-action="training-config">Ausbildung</button></div>
+      <div class="ds-oo-actions">
+        <button type="button" data-action="build-config">Ausbau</button>
+        <button type="button" data-action="training-config">Ausbildung</button>
+      </div>
     `;
 
     document.body.appendChild(root);
@@ -48,6 +51,13 @@ export class StatusBanner {
   onConfigureTraining(callback) {
     this.root?.addEventListener('click', event => {
       if (!event.target?.matches?.('[data-action="training-config"]')) return;
+      callback?.();
+    });
+  }
+
+  onConfigureBuild(callback) {
+    this.root?.addEventListener('click', event => {
+      if (!event.target?.matches?.('[data-action="build-config"]')) return;
       callback?.();
     });
   }
@@ -133,6 +143,9 @@ export class StatusBanner {
         line-height: 1.35;
       }
       #ds-oo-status-banner .ds-oo-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 5px;
         margin-top: 8px;
         text-align: right;
       }

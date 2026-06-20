@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.17
+// @version      0.1.18
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -46,6 +46,14 @@
       stable: {
         lastReadAt: null,
         units: {}
+      },
+      mainBuilding: {
+        lastReadAt: null,
+        levels: {},
+        queue: []
+      },
+      buildPlan: {
+        queue: []
       },
       training: {
         units: {}
@@ -302,6 +310,89 @@
     return `${seconds}s`;
   }
 
+  // UserScripte/src/readers/main-building-reader.js
+  var MainBuildingReader = class {
+    supports(page) {
+      return page.screen === "main";
+    }
+    read() {
+      return {
+        mainBuilding: {
+          lastReadAt: Date.now(),
+          levels: this.readLevels(),
+          queue: this.readBuildQueue()
+        }
+      };
+    }
+    readLevels() {
+      const fromGameData = this.readLevelsFromGameData();
+      if (Object.keys(fromGameData).length > 0) return fromGameData;
+      return this.readLevelsFromRows();
+    }
+    readLevelsFromGameData() {
+      const buildings = window.game_data?.village?.buildings || window.BuildingMain?.buildings || {};
+      return Object.fromEntries(
+        Object.entries(buildings).map(([key, value]) => {
+          const level = typeof value === "object" ? value.level : value;
+          return [key, Number(level)];
+        }).filter(([, level]) => Number.isFinite(level))
+      );
+    }
+    readLevelsFromRows() {
+      const levels = {};
+      document.querySelectorAll('#buildings tr[id^="main_buildrow_"]').forEach((row) => {
+        const building = row.id.replace("main_buildrow_", "");
+        const levelText = Array.from(row.querySelectorAll("span")).map((node) => node.textContent || "").find((text) => /Stufe\s+\d+/i.test(text));
+        const match = (levelText || "").match(/Stufe\s+(\d+)/i);
+        if (match) levels[building] = Number(match[1]);
+      });
+      return levels;
+    }
+    readBuildQueue() {
+      return Array.from(document.querySelectorAll('#build_queue tr[class*="buildorder_"]')).map((row, index) => this.readQueueRow(row, index)).filter(Boolean);
+    }
+    readQueueRow(row, index) {
+      const classMatch = row.className.match(/buildorder_([a-z_]+)/);
+      const building = classMatch?.[1] || "";
+      const cells = row.querySelectorAll("td");
+      const constructionCell = cells[0];
+      const durationCell = cells[1];
+      const finishCell = cells[2];
+      const constructionText = normalizeText(constructionCell?.textContent || "");
+      const targetLevel = readTargetLevel(constructionText);
+      const durationText = normalizeText(durationCell?.textContent || "");
+      const finishText = normalizeText(finishCell?.textContent || "");
+      const finishAt = this.readFinishAt(durationCell, durationText);
+      if (!building && !targetLevel && !finishAt) return null;
+      return {
+        index: index + 1,
+        building,
+        name: readBuildingName(constructionText),
+        targetLevel,
+        durationText,
+        finishText,
+        finishAt
+      };
+    }
+    readFinishAt(durationCell, durationText) {
+      const timer = durationCell?.querySelector("[data-endtime]");
+      const dataEndTime = Number(timer?.getAttribute("data-endtime"));
+      if (Number.isFinite(dataEndTime) && dataEndTime > 0) return dataEndTime * 1e3;
+      const countdownMs = parseCountdownMs(durationText);
+      return countdownMs ? Date.now() + countdownMs : null;
+    }
+  };
+  function normalizeText(text) {
+    return String(text || "").replace(/\s+/g, " ").trim();
+  }
+  function readTargetLevel(text) {
+    const match = String(text || "").match(/Stufe\s+(\d+)/i);
+    return match ? Number(match[1]) : null;
+  }
+  function readBuildingName(text) {
+    return String(text || "").replace(/Stufe\s+\d+/i, "").trim();
+  }
+
   // UserScripte/src/readers/scavenge-reader.js
   var OPTION_NAMES = {
     1: "Faule Sammler",
@@ -518,7 +609,10 @@
       <div class="ds-oo-line ds-oo-line-top"><span>Fertig</span><strong class="ds-oo-multiline" data-field="scavengeFinished">-</strong></div>
       <div class="ds-oo-line"><span>Rekrutierung</span><strong data-field="recruit">-</strong></div>
       <div class="ds-oo-line"><span>Status</span><strong data-field="status">-</strong></div>
-      <div class="ds-oo-actions"><button type="button" data-action="training-config">Ausbildung</button></div>
+      <div class="ds-oo-actions">
+        <button type="button" data-action="build-config">Ausbau</button>
+        <button type="button" data-action="training-config">Ausbildung</button>
+      </div>
     `;
       document.body.appendChild(root);
       this.root = root;
@@ -535,6 +629,12 @@
     onConfigureTraining(callback) {
       this.root?.addEventListener("click", (event) => {
         if (!event.target?.matches?.('[data-action="training-config"]')) return;
+        callback?.();
+      });
+    }
+    onConfigureBuild(callback) {
+      this.root?.addEventListener("click", (event) => {
+        if (!event.target?.matches?.('[data-action="build-config"]')) return;
         callback?.();
       });
     }
@@ -608,6 +708,9 @@
         line-height: 1.35;
       }
       #ds-oo-status-banner .ds-oo-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 5px;
         margin-top: 8px;
         text-align: right;
       }
@@ -623,6 +726,293 @@
       document.head.appendChild(style);
     }
   };
+
+  // UserScripte/src/ui/build-config-modal.js
+  var BUILDING_LABELS = {
+    main: "Hauptgebaeude",
+    barracks: "Kaserne",
+    stable: "Stall",
+    garage: "Werkstatt",
+    smith: "Schmiede",
+    place: "Versammlungsplatz",
+    market: "Marktplatz",
+    wood: "Holz",
+    stone: "Lehm",
+    iron: "Eisen",
+    farm: "Bauernhof",
+    storage: "Speicher",
+    hide: "Versteck",
+    wall: "Wall",
+    snob: "Adelshof"
+  };
+  var BUILDING_ORDER = [
+    "main",
+    "barracks",
+    "stable",
+    "garage",
+    "smith",
+    "place",
+    "market",
+    "wood",
+    "stone",
+    "iron",
+    "farm",
+    "storage",
+    "hide",
+    "wall",
+    "snob"
+  ];
+  var BuildConfigModal = class {
+    constructor(state, storage, hooks = {}) {
+      this.state = state;
+      this.storage = storage;
+      this.hooks = hooks;
+    }
+    open() {
+      this.close();
+      this.injectStyle();
+      const overlay = document.createElement("div");
+      overlay.id = "ds-build-config-overlay";
+      overlay.innerHTML = `
+      <div class="ds-build-modal">
+        <div class="ds-build-header">
+          <strong>Ausbau-Konfiguration</strong>
+          <button type="button" data-action="close">Schliessen</button>
+        </div>
+        <div class="ds-build-section">
+          <h3>Aktuelle Bauqueue</h3>
+          ${this.renderCurrentQueue()}
+        </div>
+        <div class="ds-build-section">
+          <h3>Geplante Upgrades</h3>
+          ${this.renderPlannedQueue()}
+        </div>
+        <div class="ds-build-section">
+          <h3>Gebaeude</h3>
+          ${this.renderBuildingTable()}
+        </div>
+        <div class="ds-build-actions">
+          <button type="button" data-action="clear-plan">Plan leeren</button>
+          <button type="button" data-action="close">Schliessen</button>
+        </div>
+      </div>
+    `;
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", (event) => this.handleClick(event));
+    }
+    close() {
+      document.getElementById("ds-build-config-overlay")?.remove();
+    }
+    renderCurrentQueue() {
+      const queue = this.state.mainBuilding?.queue || [];
+      if (queue.length === 0) return '<div class="ds-build-empty">Keine Bauauftraege gespeichert.</div>';
+      return `
+      <table class="ds-build-table">
+        <thead><tr><th>#</th><th>Gebaeude</th><th>Ziel</th><th>Fertig</th></tr></thead>
+        <tbody>
+          ${queue.map((item) => `
+            <tr>
+              <td>${item.index}</td>
+              <td>${this.getBuildingLabel(item.building, item.name)}</td>
+              <td>${formatLevel(item.targetLevel)}</td>
+              <td>${item.finishText || "-"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+    }
+    renderPlannedQueue() {
+      const queue = this.getPlannedQueue();
+      if (queue.length === 0) return '<div class="ds-build-empty">Keine geplanten Upgrades.</div>';
+      return `
+      <table class="ds-build-table">
+        <thead><tr><th>#</th><th>Gebaeude</th><th>Ziel</th><th></th></tr></thead>
+        <tbody>
+          ${queue.map((item, index) => `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${this.getBuildingLabel(item.building, item.name)}</td>
+              <td>${formatLevel(item.targetLevel)}</td>
+              <td><button type="button" data-action="remove-plan" data-id="${item.id}">Entfernen</button></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+    }
+    renderBuildingTable() {
+      const buildings = this.getKnownBuildings();
+      if (buildings.length === 0) return '<div class="ds-build-empty">Noch keine Hauptgebaeude-Daten gespeichert.</div>';
+      return `
+      <table class="ds-build-table">
+        <thead><tr><th>Gebaeude</th><th>Level</th><th>Naechstes Upgrade</th><th></th></tr></thead>
+        <tbody>
+          ${buildings.map((building) => {
+        const nextLevel = this.getNextTargetLevel(building);
+        return `
+              <tr>
+                <td>${this.getBuildingLabel(building)}</td>
+                <td>${this.getBaseLevel(building)}</td>
+                <td>${formatLevel(nextLevel)}</td>
+                <td><button type="button" data-action="add-upgrade" data-building="${building}">Upgrade</button></td>
+              </tr>
+            `;
+      }).join("")}
+        </tbody>
+      </table>
+    `;
+    }
+    handleClick(event) {
+      const action = event.target?.getAttribute?.("data-action");
+      if (!action) return;
+      if (action === "close") {
+        this.close();
+        return;
+      }
+      if (action === "clear-plan") {
+        this.savePlan([]);
+        this.open();
+        return;
+      }
+      if (action === "remove-plan") {
+        const id = event.target.getAttribute("data-id");
+        this.savePlan(this.getPlannedQueue().filter((item) => item.id !== id));
+        this.open();
+        return;
+      }
+      if (action === "add-upgrade") {
+        const building = event.target.getAttribute("data-building");
+        this.addUpgrade(building);
+        this.open();
+      }
+    }
+    addUpgrade(building) {
+      if (!building) return;
+      const queue = this.getPlannedQueue();
+      queue.push({
+        id: `${building}-${Date.now()}-${queue.length}`,
+        building,
+        name: this.getBuildingLabel(building),
+        targetLevel: this.getNextTargetLevel(building),
+        createdAt: Date.now()
+      });
+      this.savePlan(queue);
+    }
+    getNextTargetLevel(building) {
+      const baseLevel = this.getBaseLevel(building);
+      const queuedLevel = this.getHighestQueuedLevel(building);
+      return Math.max(baseLevel, queuedLevel) + 1;
+    }
+    getHighestQueuedLevel(building) {
+      const normalQueue = this.state.mainBuilding?.queue || [];
+      const plannedQueue = this.getPlannedQueue();
+      return [...normalQueue, ...plannedQueue].filter((item) => item.building === building).map((item) => Number(item.targetLevel || 0)).filter((level) => Number.isFinite(level)).reduce((max, level) => Math.max(max, level), 0);
+    }
+    getBaseLevel(building) {
+      const level = Number(this.state.mainBuilding?.levels?.[building] || 0);
+      return Number.isFinite(level) ? level : 0;
+    }
+    getKnownBuildings() {
+      const levels = this.state.mainBuilding?.levels || {};
+      return Object.keys(levels).sort((a, b) => {
+        const indexA = BUILDING_ORDER.indexOf(a);
+        const indexB = BUILDING_ORDER.indexOf(b);
+        if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+      });
+    }
+    getPlannedQueue() {
+      return Array.isArray(this.state.buildPlan?.queue) ? [...this.state.buildPlan.queue] : [];
+    }
+    savePlan(queue) {
+      const patch = {
+        buildPlan: {
+          queue
+        }
+      };
+      this.storage.merge(patch);
+      this.state.buildPlan = patch.buildPlan;
+      this.hooks.onSaved?.();
+    }
+    getBuildingLabel(building, fallback = "") {
+      return BUILDING_LABELS[building] || fallback || building || "-";
+    }
+    injectStyle() {
+      if (document.getElementById("ds-build-config-style")) return;
+      const style = document.createElement("style");
+      style.id = "ds-build-config-style";
+      style.textContent = `
+      #ds-build-config-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100000;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 48px 16px;
+        background: rgba(0, 0, 0, 0.35);
+      }
+      #ds-build-config-overlay .ds-build-modal {
+        width: min(760px, calc(100vw - 32px));
+        max-height: calc(100vh - 96px);
+        overflow: auto;
+        border: 1px solid #8c6d3f;
+        background: #f4e4bc;
+        color: #2f2417;
+        font: 12px Arial, sans-serif;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      }
+      #ds-build-config-overlay .ds-build-header,
+      #ds-build-config-overlay .ds-build-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px;
+      }
+      #ds-build-config-overlay .ds-build-section {
+        padding: 0 8px 10px;
+      }
+      #ds-build-config-overlay h3 {
+        margin: 8px 0 5px;
+        font-size: 13px;
+      }
+      #ds-build-config-overlay .ds-build-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      #ds-build-config-overlay th,
+      #ds-build-config-overlay td {
+        padding: 5px;
+        border: 1px solid #c7a96b;
+        text-align: left;
+      }
+      #ds-build-config-overlay th {
+        background: #c2a35f;
+        color: #3b2414;
+      }
+      #ds-build-config-overlay .ds-build-empty {
+        padding: 6px;
+        border: 1px solid #c7a96b;
+        background: rgba(255, 255, 255, 0.25);
+      }
+      #ds-build-config-overlay button {
+        padding: 3px 10px;
+        border: 1px solid #8c6d3f;
+        background: #f8edcf;
+        color: #2f2417;
+        cursor: pointer;
+      }
+    `;
+      document.head.appendChild(style);
+    }
+  };
+  function formatLevel(level) {
+    const number = Number(level);
+    return Number.isFinite(number) && number > 0 ? `Stufe ${number}` : "-";
+  }
 
   // UserScripte/src/ui/training-config-modal.js
   var TRAINING_UNITS = [
@@ -831,6 +1221,9 @@
       this.state = createDefaultState();
       this.storage = new StorageService();
       this.banner = new StatusBanner(this.state);
+      this.buildConfigModal = new BuildConfigModal(this.state, this.storage, {
+        onSaved: () => this.banner.update()
+      });
       this.trainingConfigModal = new TrainingConfigModal(this.state, this.storage, {
         onSaved: () => this.banner.update()
       });
@@ -842,6 +1235,7 @@
         storage: this.storage,
         readers: [
           new ScavengeReader(),
+          new MainBuildingReader(),
           new BarracksReader(),
           new StableReader()
         ],
@@ -855,6 +1249,7 @@
       this.state.page = readCurrentPage();
       this.readerOrchestrator.hydrate();
       this.banner.mount();
+      this.banner.onConfigureBuild(() => this.buildConfigModal.open());
       this.banner.onConfigureTraining(() => this.trainingConfigModal.open());
       this.botProtection.start();
       this.readerOrchestrator.readCurrentPage();

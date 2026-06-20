@@ -38,6 +38,14 @@ export function createDefaultState() {
       lastReadAt: null,
       units: {}
     },
+    mainBuilding: {
+      lastReadAt: null,
+      levels: {},
+      queue: []
+    },
+    buildPlan: {
+      queue: []
+    },
     training: {
       units: {}
     },

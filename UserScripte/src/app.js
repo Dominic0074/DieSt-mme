@@ -2,11 +2,13 @@ import { createDefaultState } from './core/default-state.js';
 import { BotProtectionService } from './core/bot-protection-service.js';
 import { ReaderOrchestrator } from './core/reader-orchestrator.js';
 import { BarracksReader } from './readers/barracks-reader.js';
+import { MainBuildingReader } from './readers/main-building-reader.js';
 import { ScavengeReader } from './readers/scavenge-reader.js';
 import { StableReader } from './readers/stable-reader.js';
 import { StorageService } from './storage/storage-service.js';
 import { readCurrentPage } from './utils/page.js';
 import { StatusBanner } from './ui/status-banner.js';
+import { BuildConfigModal } from './ui/build-config-modal.js';
 import { TrainingConfigModal } from './ui/training-config-modal.js';
 
 export class App {
@@ -14,6 +16,9 @@ export class App {
     this.state = createDefaultState();
     this.storage = new StorageService();
     this.banner = new StatusBanner(this.state);
+    this.buildConfigModal = new BuildConfigModal(this.state, this.storage, {
+      onSaved: () => this.banner.update()
+    });
     this.trainingConfigModal = new TrainingConfigModal(this.state, this.storage, {
       onSaved: () => this.banner.update()
     });
@@ -25,6 +30,7 @@ export class App {
       storage: this.storage,
       readers: [
         new ScavengeReader(),
+        new MainBuildingReader(),
         new BarracksReader(),
         new StableReader()
       ],
@@ -39,6 +45,7 @@ export class App {
     this.state.page = readCurrentPage();
     this.readerOrchestrator.hydrate();
     this.banner.mount();
+    this.banner.onConfigureBuild(() => this.buildConfigModal.open());
     this.banner.onConfigureTraining(() => this.trainingConfigModal.open());
     this.botProtection.start();
     this.readerOrchestrator.readCurrentPage();

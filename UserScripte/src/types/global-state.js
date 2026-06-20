@@ -61,6 +61,38 @@
  */
 
 /**
+ * @typedef {Object} BuildQueueEntryState
+ * @property {number} index
+ * @property {string} building
+ * @property {string} name
+ * @property {number | null} targetLevel
+ * @property {string} durationText
+ * @property {string} finishText
+ * @property {number | null} finishAt
+ */
+
+/**
+ * @typedef {Object} MainBuildingState
+ * @property {number | null} lastReadAt
+ * @property {Object<string, number>} levels
+ * @property {BuildQueueEntryState[]} queue
+ */
+
+/**
+ * @typedef {Object} BuildPlanEntryState
+ * @property {string} id
+ * @property {string} building
+ * @property {string} name
+ * @property {number} targetLevel
+ * @property {number} createdAt
+ */
+
+/**
+ * @typedef {Object} BuildPlanState
+ * @property {BuildPlanEntryState[]} queue
+ */
+
+/**
  * @typedef {Object} TrainingUnitConfig
  * @property {number} target
  * @property {number} batch
@@ -86,6 +118,8 @@
  * @property {ScavengeState} scavenge
  * @property {BarracksState} barracks
  * @property {StableState} stable
+ * @property {MainBuildingState} mainBuilding
+ * @property {BuildPlanState} buildPlan
  * @property {TrainingState} training
  * @property {RecruitState} recruit
  */
