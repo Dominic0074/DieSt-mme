@@ -7,6 +7,40 @@
  */
 
 /**
+ * @typedef {Object} VillageResourcesState
+ * @property {number} wood
+ * @property {number} stone
+ * @property {number} iron
+ * @property {number} storageMax
+ */
+
+/**
+ * @typedef {Object} VillageProductionState
+ * @property {number} wood
+ * @property {number} stone
+ * @property {number} iron
+ */
+
+/**
+ * @typedef {Object} VillagePopulationState
+ * @property {number} used
+ * @property {number} max
+ * @property {number} free
+ */
+
+/**
+ * @typedef {Object} VillageState
+ * @property {number | null} lastReadAt
+ * @property {string} id
+ * @property {string} name
+ * @property {string} displayName
+ * @property {string} coord
+ * @property {VillageResourcesState} resources
+ * @property {VillageProductionState} resourceProduction
+ * @property {VillagePopulationState} population
+ */
+
+/**
  * @typedef {Object} RuntimeState
  * @property {boolean} botProtectionTriggered
  * @property {boolean} raidRunning
@@ -138,6 +172,7 @@
  *
  * @typedef {Object} AppState
  * @property {PageState} page
+ * @property {VillageState} village
  * @property {RuntimeState} runtime
  * @property {RaidState} raid
  * @property {ScavengeState} scavenge

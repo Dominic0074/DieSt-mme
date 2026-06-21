@@ -13,6 +13,29 @@ export function createDefaultState() {
       mode: '',
       villageId: null
     },
+    village: {
+      lastReadAt: null,
+      id: '',
+      name: '',
+      displayName: '',
+      coord: '',
+      resources: {
+        wood: 0,
+        stone: 0,
+        iron: 0,
+        storageMax: 0
+      },
+      resourceProduction: {
+        wood: 0,
+        stone: 0,
+        iron: 0
+      },
+      population: {
+        used: 0,
+        max: 0,
+        free: 0
+      }
+    },
     runtime: {
       botProtectionTriggered: false,
       raidRunning: false,

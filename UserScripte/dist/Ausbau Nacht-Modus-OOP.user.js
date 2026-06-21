@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.19
+// @version      0.1.20
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -21,6 +21,29 @@
         screen: "",
         mode: "",
         villageId: null
+      },
+      village: {
+        lastReadAt: null,
+        id: "",
+        name: "",
+        displayName: "",
+        coord: "",
+        resources: {
+          wood: 0,
+          stone: 0,
+          iron: 0,
+          storageMax: 0
+        },
+        resourceProduction: {
+          wood: 0,
+          stone: 0,
+          iron: 0
+        },
+        population: {
+          used: 0,
+          max: 0,
+          free: 0
+        }
       },
       runtime: {
         botProtectionTriggered: false,
@@ -603,6 +626,57 @@
     const normalized = String(value || "").replace(/\./g, "").replace(/[^\d-]/g, "");
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  // UserScripte/src/readers/village-reader.js
+  var VillageReader = class {
+    supports() {
+      return true;
+    }
+    read() {
+      const village = window.game_data?.village;
+      if (!village) return null;
+      const wood = toNumber2(village.wood);
+      const stone = toNumber2(village.stone);
+      const iron = toNumber2(village.iron);
+      const storageMax = toNumber2(village.storage_max);
+      const populationUsed = toNumber2(village.pop);
+      const populationMax = toNumber2(village.pop_max);
+      return {
+        village: {
+          lastReadAt: Date.now(),
+          id: String(village.id || ""),
+          name: village.name || "",
+          displayName: village.display_name || "",
+          coord: village.coord || buildCoord(village),
+          resources: {
+            wood,
+            stone,
+            iron,
+            storageMax
+          },
+          resourceProduction: {
+            wood: toNumber2(village.wood_prod),
+            stone: toNumber2(village.stone_prod),
+            iron: toNumber2(village.iron_prod)
+          },
+          population: {
+            used: populationUsed,
+            max: populationMax,
+            free: Math.max(0, populationMax - populationUsed)
+          }
+        }
+      };
+    }
+  };
+  function buildCoord(village) {
+    const x = village?.x;
+    const y = village?.y;
+    return x !== void 0 && y !== void 0 ? `${x}|${y}` : "";
+  }
+  function toNumber2(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
   }
 
   // UserScripte/src/utils/page.js
@@ -1322,6 +1396,7 @@
       this.readerOrchestrator = new ReaderOrchestrator(this.state, {
         storage: this.storage,
         readers: [
+          new VillageReader(),
           new ScavengeReader(),
           new MainBuildingReader(),
           new BarracksReader(),

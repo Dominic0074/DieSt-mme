@@ -5,6 +5,7 @@ import { BarracksReader } from './readers/barracks-reader.js';
 import { MainBuildingReader } from './readers/main-building-reader.js';
 import { ScavengeReader } from './readers/scavenge-reader.js';
 import { StableReader } from './readers/stable-reader.js';
+import { VillageReader } from './readers/village-reader.js';
 import { StorageService } from './storage/storage-service.js';
 import { readCurrentPage } from './utils/page.js';
 import { StatusBanner } from './ui/status-banner.js';
@@ -29,6 +30,7 @@ export class App {
     this.readerOrchestrator = new ReaderOrchestrator(this.state, {
       storage: this.storage,
       readers: [
+        new VillageReader(),
         new ScavengeReader(),
         new MainBuildingReader(),
         new BarracksReader(),
