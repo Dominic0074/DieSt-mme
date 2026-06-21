@@ -4,7 +4,7 @@ export class StorageService {
   loadAll() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : {};
+      return raw ? sanitizeStoredState(JSON.parse(raw)) : {};
     } catch (error) {
       console.warn('[DS Auto] Speicher konnte nicht gelesen werden', error);
       return {};
@@ -31,6 +31,14 @@ export function mergeInto(target, patch) {
   if (!target || !patch) return target;
   deepMerge(target, patch);
   return target;
+}
+
+function sanitizeStoredState(state) {
+  if (state?.village?.resourceProductionPerSecond) {
+    delete state.village.resourceProductionPerSecond;
+  }
+
+  return state || {};
 }
 
 function deepMerge(target, patch) {

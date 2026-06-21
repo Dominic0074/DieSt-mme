@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus OOP
 // @namespace    http://tampermonkey.net/
-// @version      0.1.20
+// @version      0.1.21
 // @description  Objektorientierter Neuaufbau fuer Die Staemme Automation.
 // @author       kk
 // @match        *://*.die-staemme.de/game.php*
@@ -175,7 +175,7 @@
     loadAll() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : {};
+        return raw ? sanitizeStoredState(JSON.parse(raw)) : {};
       } catch (error) {
         console.warn("[DS Auto] Speicher konnte nicht gelesen werden", error);
         return {};
@@ -199,6 +199,12 @@
     if (!target || !patch) return target;
     deepMerge(target, patch);
     return target;
+  }
+  function sanitizeStoredState(state) {
+    if (state?.village?.resourceProductionPerSecond) {
+      delete state.village.resourceProductionPerSecond;
+    }
+    return state || {};
   }
   function deepMerge(target, patch) {
     Object.entries(patch || {}).forEach(([key, value]) => {
@@ -656,9 +662,9 @@
             storageMax
           },
           resourceProduction: {
-            wood: toNumber2(village.wood_prod),
-            stone: toNumber2(village.stone_prod),
-            iron: toNumber2(village.iron_prod)
+            wood: toProductionPerHour(village.wood_prod),
+            stone: toProductionPerHour(village.stone_prod),
+            iron: toProductionPerHour(village.iron_prod)
           },
           population: {
             used: populationUsed,
@@ -677,6 +683,9 @@
   function toNumber2(value) {
     const number = Number(value);
     return Number.isFinite(number) ? number : 0;
+  }
+  function toProductionPerHour(value) {
+    return Math.round(toNumber2(value) * 3600);
   }
 
   // UserScripte/src/utils/page.js

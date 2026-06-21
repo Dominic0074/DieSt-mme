@@ -28,9 +28,9 @@ export class VillageReader {
           storageMax
         },
         resourceProduction: {
-          wood: toNumber(village.wood_prod),
-          stone: toNumber(village.stone_prod),
-          iron: toNumber(village.iron_prod)
+          wood: toProductionPerHour(village.wood_prod),
+          stone: toProductionPerHour(village.stone_prod),
+          iron: toProductionPerHour(village.iron_prod)
         },
         population: {
           used: populationUsed,
@@ -51,4 +51,8 @@ function buildCoord(village) {
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function toProductionPerHour(value) {
+  return Math.round(toNumber(value) * 3600);
 }
