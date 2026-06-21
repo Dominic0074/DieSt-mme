@@ -71,6 +71,7 @@ export function createDefaultState() {
       queue: []
     },
     training: {
+      maxQueueTimeMinutes: 0,
       units: {}
     },
     recruit: {

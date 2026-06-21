@@ -159,6 +159,7 @@
 
 /**
  * @typedef {Object} TrainingState
+ * @property {number} maxQueueTimeMinutes
  * @property {Object<string, TrainingUnitConfig>} units
  */
 

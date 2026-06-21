@@ -28,10 +28,17 @@ export class TrainingConfigModal {
           <strong>Ausbildungs-Konfiguration</strong>
           <button type="button" data-action="close">Schliessen</button>
         </div>
-        <label class="ds-training-toggle">
-          <input type="checkbox" data-field="recruit-enabled" ${this.state.recruit.enabled ? 'checked' : ''}>
-          <span>Auto-Rekrutierung aktiv</span>
-        </label>
+        <div class="ds-training-options">
+          <label class="ds-training-toggle">
+            <input type="checkbox" data-field="recruit-enabled" ${this.state.recruit.enabled ? 'checked' : ''}>
+            <span>Auto-Rekrutierung aktiv</span>
+          </label>
+          <label class="ds-training-limit">
+            <span>Max. Queuezeit</span>
+            <input type="number" min="0" step="1" data-field="max-queue-time-minutes" value="${numberValue(this.state.training?.maxQueueTimeMinutes)}">
+            <span>Minuten</span>
+          </label>
+        </div>
         <table class="ds-training-table">
           <thead>
             <tr>
@@ -88,7 +95,7 @@ export class TrainingConfigModal {
     }
 
     if (action === 'reset') {
-      this.save({ enabled: false, training: { units: createEmptyTrainingUnits() } });
+      this.save({ enabled: false, training: { maxQueueTimeMinutes: 0, units: createEmptyTrainingUnits() } });
       this.open();
       return;
     }
@@ -112,7 +119,10 @@ export class TrainingConfigModal {
 
     return {
       enabled: Boolean(document.querySelector('#ds-training-config-overlay [data-field="recruit-enabled"]')?.checked),
-      training: { units }
+      training: {
+        maxQueueTimeMinutes: readInputNumber('max-queue-time-minutes'),
+        units
+      }
     };
   }
 
@@ -161,11 +171,18 @@ export class TrainingConfigModal {
         justify-content: space-between;
         padding: 8px;
       }
-      #ds-training-config-overlay .ds-training-toggle {
+      #ds-training-config-overlay .ds-training-options {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0 8px 8px;
+      }
+      #ds-training-config-overlay .ds-training-toggle,
+      #ds-training-config-overlay .ds-training-limit {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        margin: 0 8px 8px;
         font-weight: bold;
       }
       #ds-training-config-overlay .ds-training-table {
@@ -206,6 +223,15 @@ export class TrainingConfigModal {
 
 function readNumber(row, field) {
   const value = Number(row.querySelector(`[data-field="${field}"]`)?.value || 0);
+  return normalizePositiveInteger(value);
+}
+
+function readInputNumber(field) {
+  const value = Number(document.querySelector(`#ds-training-config-overlay [data-field="${field}"]`)?.value || 0);
+  return normalizePositiveInteger(value);
+}
+
+function normalizePositiveInteger(value) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
