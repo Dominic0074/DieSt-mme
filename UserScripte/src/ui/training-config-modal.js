@@ -35,8 +35,7 @@ export class TrainingConfigModal {
           </label>
           <label class="ds-training-limit">
             <span>Max. Queuezeit</span>
-            <input type="number" min="0" step="1" data-field="max-queue-time-minutes" value="${numberValue(this.state.training?.maxQueueTimeMinutes)}">
-            <span>Minuten</span>
+            <input class="ds-training-time-input" type="text" inputmode="numeric" placeholder="HH:mm" data-field="max-queue-time" value="${formatMinutesAsHHmm(this.state.training?.maxQueueTimeMinutes)}">
           </label>
         </div>
         <table class="ds-training-table">
@@ -120,7 +119,7 @@ export class TrainingConfigModal {
     return {
       enabled: Boolean(document.querySelector('#ds-training-config-overlay [data-field="recruit-enabled"]')?.checked),
       training: {
-        maxQueueTimeMinutes: readInputNumber('max-queue-time-minutes'),
+        maxQueueTimeMinutes: readHHmmInput('max-queue-time'),
         units
       }
     };
@@ -200,7 +199,8 @@ export class TrainingConfigModal {
         background: #c2a35f;
         color: #3b2414;
       }
-      #ds-training-config-overlay input[type="number"] {
+      #ds-training-config-overlay input[type="number"],
+      #ds-training-config-overlay .ds-training-time-input {
         width: 90px;
         box-sizing: border-box;
       }
@@ -226,9 +226,27 @@ function readNumber(row, field) {
   return normalizePositiveInteger(value);
 }
 
-function readInputNumber(field) {
-  const value = Number(document.querySelector(`#ds-training-config-overlay [data-field="${field}"]`)?.value || 0);
-  return normalizePositiveInteger(value);
+function readHHmmInput(field) {
+  const value = document.querySelector(`#ds-training-config-overlay [data-field="${field}"]`)?.value || '';
+  return parseHHmmToMinutes(value);
+}
+
+function parseHHmmToMinutes(value) {
+  const match = String(value).trim().match(/^(\d{1,3}):(\d{1,2})$/);
+  if (!match) return 0;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes > 59) return 0;
+
+  return hours * 60 + minutes;
+}
+
+function formatMinutesAsHHmm(value) {
+  const totalMinutes = normalizePositiveInteger(Number(value || 0));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 function normalizePositiveInteger(value) {
