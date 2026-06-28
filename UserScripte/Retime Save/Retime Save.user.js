@@ -21,7 +21,7 @@
   const SCRIPT_ENABLED = false;
 
   // Gewuenschte Absendezeit laut Serveruhr: JJJJ-MM-TT HH:MM:SS.mmm
-  const SEND_AT = '2026-06-28 17:56:00.000';
+  const SEND_AT = '2026-06-28 17:57:00.000';
 
   // Dorf, an das die Unterstuetzung geschickt werden soll.
   const TARGET_X = 587;
