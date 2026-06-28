@@ -154,7 +154,7 @@
       Object.assign(box.style, {
         position: 'fixed',
         right: '12px',
-        bottom: '12px',
+        top: '12px',
         zIndex: '10000',
         maxWidth: '360px',
         padding: '10px 14px',
