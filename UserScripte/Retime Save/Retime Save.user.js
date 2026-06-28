@@ -21,16 +21,16 @@
   const SCRIPT_ENABLED = false;
 
   // Gewuenschte Absendezeit laut Serveruhr: JJJJ-MM-TT HH:MM:SS.mmm
-  const SEND_AT = '2026-06-28 22:00:00.000';
+  const SEND_AT = '2026-06-28 17:56:00.000';
 
   // Dorf, an das die Unterstuetzung geschickt werden soll.
-  const TARGET_X = 500;
-  const TARGET_Y = 500;
+  const TARGET_X = 587;
+  const TARGET_Y = 392;
 
   // Anzahl der zu sendenden Truppen. Nicht benoetigte Einheitentypen bleiben 0.
   const UNITS = {
-    spear: 1000,  // Speertraeger
-    sword: 1000,  // Schwertkaempfer
+    spear: 10,  // Speertraeger
+    sword: 10,  // Schwertkaempfer
     axe: 0,       // Axtkaempfer
     archer: 0,    // Bogenschuetzen
     spy: 0,       // Spaeher
