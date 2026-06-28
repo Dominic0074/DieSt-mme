@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Retime Save
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      1.0.0
+// @version      1.1.0
 // @description  Sendet zu einer festgelegten Serverzeit konfigurierte Truppen als Unterstuetzung.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -51,8 +51,11 @@
   // Wie viele Sekunden vor SEND_AT die Bestaetigungsseite vorbereitet wird.
   const PREPARE_SECONDS = 60;
 
-  // Nach dieser Verspaetung wird aus Sicherheitsgruenden nicht mehr gesendet.
+  // Nach dieser Verspaetung darf der erste Klick nicht mehr ausgefuehrt werden.
   const MAX_LATE_MS = 1500;
+
+  // Maximale Ladezeit fuer die Bestaetigungsseite nach dem ersten Klick.
+  const CONFIRM_TIMEOUT_MS = 10000;
 
   // =========================================================================
   // ENDE DER KONFIGURATION
@@ -114,6 +117,10 @@
       `${TARGET_X}|${TARGET_Y}`,
       sendAt
     ].join(':');
+  }
+
+  function getPreparedKey(sendAt) {
+    return getStorageKey(sendAt).replace('retime_save_sent_v1', 'retime_save_prepared_v1');
   }
 
   function getPlaceUrl() {
@@ -206,6 +213,9 @@
     if (!Number.isFinite(MAX_LATE_MS) || MAX_LATE_MS < 0) {
       return 'MAX_LATE_MS darf nicht negativ sein.';
     }
+    if (!Number.isFinite(CONFIRM_TIMEOUT_MS) || CONFIRM_TIMEOUT_MS < 1000) {
+      return 'CONFIRM_TIMEOUT_MS muss mindestens 1000 sein.';
+    }
 
     const configuredUnits = Object.entries(UNITS).filter(([, amount]) => Number(amount) > 0);
     if (configuredUnits.length === 0) return 'In UNITS ist keine Truppe eingetragen.';
@@ -239,11 +249,6 @@
         return;
       }
 
-      const available = Number(input.dataset.allCount);
-      if (Number.isFinite(available) && amount > available) {
-        stopWithError(`Fuer "${unit}" sind ${amount} konfiguriert, aber nur ${available} vorhanden.`);
-        return;
-      }
       setInputValue(input, amount);
     }
 
@@ -261,14 +266,39 @@
       return;
     }
 
-    if (getServerNow() - sendAt > MAX_LATE_MS) {
-      stopWithError('Absendezeit wurde verpasst. Es wird nicht nachtraeglich gesendet.');
-      return;
-    }
+    const clickFirstScreen = () => {
+      if (stopped) return;
+      if (isBotProtectionActive()) {
+        stopWithError('Bot-Schutz erkannt. Versand wurde gestoppt.');
+        return;
+      }
 
-    showStatus('Eingaben gesetzt; Bestaetigungsseite wird vorbereitet.');
-    if (typeof form.requestSubmit === 'function') form.requestSubmit(supportButton);
-    else supportButton.click();
+      const remaining = sendAt - getServerNow();
+      if (remaining > 1000) {
+        showStatus(`Erstes Formular ausgefuellt. Abschicken in ${formatRemaining(remaining)}.`);
+        setTimeout(clickFirstScreen, Math.min(remaining - 500, 1000));
+        return;
+      }
+      if (remaining > 20) {
+        setTimeout(clickFirstScreen, Math.max(1, remaining - 10));
+        return;
+      }
+      if (remaining > 0) {
+        requestAnimationFrame(clickFirstScreen);
+        return;
+      }
+      if (-remaining > MAX_LATE_MS) {
+        stopWithError(`Ersten Klick um ${Math.round(-remaining)} ms verpasst. Es wird nicht gesendet.`);
+        return;
+      }
+
+      sessionStorage.setItem(getPreparedKey(sendAt), String(getServerNow()));
+      showStatus('Truppen sind eingetroffen; Bestaetigungsseite wird geoeffnet.');
+      if (typeof form.requestSubmit === 'function') form.requestSubmit(supportButton);
+      else supportButton.click();
+    };
+
+    clickFirstScreen();
   }
 
   function submitAt(sendAt) {
@@ -279,40 +309,28 @@
       return;
     }
 
-    const tick = () => {
-      if (stopped) return;
-      if (isBotProtectionActive()) {
-        stopWithError('Bot-Schutz erkannt. Versand wurde gestoppt.');
-        return;
-      }
+    const firstClickAt = Number(sessionStorage.getItem(getPreparedKey(sendAt)));
+    if (!Number.isFinite(firstClickAt) || firstClickAt <= 0) {
+      stopWithError('Bestaetigungsseite gehoert nicht zum vorbereiteten Retime-Save-Auftrag.');
+      return;
+    }
 
-      const remaining = sendAt - getServerNow();
-      if (remaining > 1000) {
-        showStatus(`Bestaetigung bereit. Versand in ${formatRemaining(remaining)}.`);
-        setTimeout(tick, Math.min(remaining - 500, 1000));
-        return;
-      }
-      if (remaining > 20) {
-        setTimeout(tick, Math.max(1, remaining - 10));
-        return;
-      }
-      if (remaining > 0) {
-        requestAnimationFrame(tick);
-        return;
-      }
-      if (-remaining > MAX_LATE_MS) {
-        stopWithError(`Absendezeit um ${Math.round(-remaining)} ms verpasst. Es wird nicht gesendet.`);
-        return;
-      }
+    const confirmationAge = getServerNow() - firstClickAt;
+    if (confirmationAge > CONFIRM_TIMEOUT_MS) {
+      stopWithError(`Bestaetigungsseite brauchte ${Math.round(confirmationAge)} ms. Es wird nicht mehr gesendet.`);
+      return;
+    }
+    if (isBotProtectionActive()) {
+      stopWithError('Bot-Schutz erkannt. Versand wurde gestoppt.');
+      return;
+    }
 
-      localStorage.setItem(getStorageKey(sendAt), String(getServerNow()));
-      showStatus('Unterstuetzung wird jetzt gesendet.');
-      console.log(`Retime Save: Unterstuetzung an ${TARGET_X}|${TARGET_Y} wird gesendet.`);
-      if (typeof form.requestSubmit === 'function') form.requestSubmit(submitButton);
-      else submitButton.click();
-    };
-
-    tick();
+    localStorage.setItem(getStorageKey(sendAt), String(getServerNow()));
+    sessionStorage.removeItem(getPreparedKey(sendAt));
+    showStatus('Bestaetigungsseite geladen; Unterstuetzung wird sofort gesendet.');
+    console.log(`Retime Save: Unterstuetzung an ${TARGET_X}|${TARGET_Y} wird gesendet.`);
+    if (typeof form.requestSubmit === 'function') form.requestSubmit(submitButton);
+    else submitButton.click();
   }
 
   function start(sendAt) {
@@ -321,14 +339,14 @@
       return;
     }
 
-    const remaining = sendAt - getServerNow();
-    if (remaining < -MAX_LATE_MS) {
-      stopWithError('Absendezeit liegt in der Vergangenheit. Es wird nicht nachtraeglich gesendet.');
+    if (isConfirmationPage()) {
+      submitAt(sendAt);
       return;
     }
 
-    if (isConfirmationPage()) {
-      submitAt(sendAt);
+    const remaining = sendAt - getServerNow();
+    if (remaining < -MAX_LATE_MS) {
+      stopWithError('Absendezeit liegt in der Vergangenheit. Es wird nicht nachtraeglich gesendet.');
       return;
     }
 
