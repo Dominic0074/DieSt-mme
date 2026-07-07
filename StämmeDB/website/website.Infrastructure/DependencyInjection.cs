@@ -6,7 +6,9 @@ using website.Application.CommandHandlers.Items;
 using website.Application.Commands.BattleReports;
 using website.Application.Commands.Items;
 using website.Application.CQRS;
+using website.Application.Queries.BattleReports;
 using website.Application.Queries.Items;
+using website.Application.QueryHandlers.BattleReports;
 using website.Application.QueryHandlers.Items;
 using website.Application.Repositories;
 using website.Domain.Models;
@@ -30,6 +32,9 @@ namespace website.Infrastructure
                 IBattleReportImportRepository,
                 SqliteBattleReportImportRepository>();
             services.AddTransient<
+                IBattleReportReadRepository,
+                SqliteBattleReportReadRepository>();
+            services.AddTransient<
                 IBattleReportAnalysisPipeline,
                 NoOpBattleReportAnalysisPipeline>();
 
@@ -38,6 +43,11 @@ namespace website.Infrastructure
                     ImportBattleReportCommand,
                     BattleReportImportResultModel>,
                 ImportBattleReportCommandHandler>();
+            services.AddTransient<
+                IRequestHandler<
+                    GetBattleReportsQuery,
+                    IReadOnlyList<BattleReportModel>>,
+                GetBattleReportsQueryHandler>();
             services.AddTransient<
                 IRequestHandler<GetItemsQuery, IReadOnlyList<ItemModel>>,
                 GetItemsQueryHandler>();

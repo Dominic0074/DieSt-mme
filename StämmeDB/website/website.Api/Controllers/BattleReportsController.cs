@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using website.Application.Commands.BattleReports;
 using website.Application.CQRS;
+using website.Application.Queries.BattleReports;
 using website.Domain.Models.BattleReports;
 
 namespace website.Api.Controllers
@@ -14,6 +15,48 @@ namespace website.Api.Controllers
         public BattleReportsController(IRequestSender requestSender)
         {
             _requestSender = requestSender;
+        }
+
+        [HttpGet]
+        [ProducesResponseType<IReadOnlyList<BattleReportModel>>(StatusCodes.Status200OK)]
+        public async Task<ActionResult<IReadOnlyList<BattleReportModel>>> GetBattleReports(
+            [FromQuery] Guid? id,
+            [FromQuery] long? gameReportId,
+            [FromQuery] long? playerId,
+            [FromQuery] string? playerName,
+            [FromQuery] long? villageId,
+            [FromQuery] string? villageName,
+            CancellationToken cancellationToken)
+        {
+            var reports = await _requestSender.SendAsync(
+                new GetBattleReportsQuery(new BattleReportSearchModel
+                {
+                    Id = id,
+                    GameReportId = gameReportId,
+                    PlayerId = playerId,
+                    PlayerName = playerName,
+                    VillageId = villageId,
+                    VillageName = villageName
+                }),
+                cancellationToken);
+
+            return Ok(reports);
+        }
+
+        [HttpGet("{id:guid}")]
+        [ProducesResponseType<IReadOnlyList<BattleReportModel>>(StatusCodes.Status200OK)]
+        public async Task<ActionResult<IReadOnlyList<BattleReportModel>>> GetBattleReportsById(
+            Guid id,
+            CancellationToken cancellationToken)
+        {
+            var reports = await _requestSender.SendAsync(
+                new GetBattleReportsQuery(new BattleReportSearchModel
+                {
+                    Id = id
+                }),
+                cancellationToken);
+
+            return Ok(reports);
         }
 
         [HttpPost("import")]

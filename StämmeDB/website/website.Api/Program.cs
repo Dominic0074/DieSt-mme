@@ -39,3 +39,5 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 await app.RunAsync();
+
+public partial class Program;

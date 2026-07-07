@@ -1,6 +1,6 @@
 namespace website.Domain.Models.BattleReports
 {
-    public sealed class BattleReportArmyModel
+    public class BattleReportArmyModel
     {
         public BattleReportArmyType Type { get; set; }
 
