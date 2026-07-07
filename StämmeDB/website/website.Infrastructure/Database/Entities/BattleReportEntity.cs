@@ -22,6 +22,10 @@ namespace website.Infrastructure.Database.Entities
 
         public decimal? MoralePercent { get; set; }
 
+        public int? LoyaltyBefore { get; set; }
+
+        public int? LoyaltyAfter { get; set; }
+
         public long? AttackerGamePlayerId { get; set; }
 
         public long? DefenderGamePlayerId { get; set; }

@@ -47,14 +47,17 @@ namespace website.Infrastructure.Database.Configurations
                 .HasConversion<string>()
                 .HasMaxLength(20)
                 .IsRequired();
+            builder.Property(army => army.SourceVillageName)
+                .HasMaxLength(200)
+                .IsRequired();
 
             builder.HasIndex(army => new
                 {
                     army.BattleReportId,
                     army.Side,
-                    army.Kind
-                })
-                .IsUnique();
+                    army.Kind,
+                    army.SourceGameVillageId
+                });
 
             builder.HasOne(army => army.BattleReport)
                 .WithMany(report => report.Armies)

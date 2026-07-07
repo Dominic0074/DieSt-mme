@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using website.Infrastructure;
 using website.Infrastructure.Database;
 
@@ -7,7 +8,10 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException(
         "Die Connection-String-Konfiguration 'DefaultConnection' fehlt.");
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+        options.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddProblemDetails();

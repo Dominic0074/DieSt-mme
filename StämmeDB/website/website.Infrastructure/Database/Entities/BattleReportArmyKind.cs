@@ -4,6 +4,8 @@ namespace website.Infrastructure.Database.Entities
     {
         Combat = 1,
         Away = 2,
-        Survivor = 3
+        Survivor = 3,
+        Traveling = 4,
+        OtherVillage = 5
     }
 }

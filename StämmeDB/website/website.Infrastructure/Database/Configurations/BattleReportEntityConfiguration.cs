@@ -23,6 +23,12 @@ namespace website.Infrastructure.Database.Configurations
                         "CK_BattleReports_CarryCapacity",
                         "\"CarryCapacityUsed\" >= 0 AND \"CarryCapacityTotal\" >= 0 " +
                         "AND \"CarryCapacityUsed\" <= \"CarryCapacityTotal\"");
+                    table.HasCheckConstraint(
+                        "CK_BattleReports_Loyalty",
+                        "(\"LoyaltyBefore\" IS NULL OR " +
+                        "(\"LoyaltyBefore\" >= -100 AND \"LoyaltyBefore\" <= 100)) " +
+                        "AND (\"LoyaltyAfter\" IS NULL OR " +
+                        "(\"LoyaltyAfter\" >= -100 AND \"LoyaltyAfter\" <= 100))");
                 });
 
             builder.HasKey(report => report.Id);

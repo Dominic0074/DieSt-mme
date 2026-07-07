@@ -1,29 +1,8 @@
-namespace website.Infrastructure.Database.Entities
+namespace website.Domain.Models.BattleReports
 {
-    public sealed class BattleReportArmyEntity
+    public sealed class BattleReportArmyModel
     {
-        public Guid Id { get; set; }
-
-        public Guid BattleReportId { get; set; }
-
-        public BattleReportEntity BattleReport { get; set; } = null!;
-
-        public BattleReportSide Side { get; set; }
-
-        public BattleReportArmyKind Kind { get; set; } =
-            BattleReportArmyKind.Combat;
-
-        public long? SourceGamePlayerId { get; set; }
-
-        public long? SourceGameVillageId { get; set; }
-
-        public string SourceVillageName { get; set; } = string.Empty;
-
-        public int? SourceVillageX { get; set; }
-
-        public int? SourceVillageY { get; set; }
-
-        public int? SourceVillageContinent { get; set; }
+        public BattleReportArmyType Type { get; set; }
 
         public int? SpearCount { get; set; }
 

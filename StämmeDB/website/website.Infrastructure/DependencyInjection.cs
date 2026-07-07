@@ -1,12 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using website.Application.BattleReports;
+using website.Application.CommandHandlers.BattleReports;
 using website.Application.CommandHandlers.Items;
+using website.Application.Commands.BattleReports;
 using website.Application.Commands.Items;
 using website.Application.CQRS;
 using website.Application.Queries.Items;
 using website.Application.QueryHandlers.Items;
 using website.Application.Repositories;
 using website.Domain.Models;
+using website.Domain.Models.BattleReports;
 using website.Infrastructure.Database;
 using website.Infrastructure.Repositories;
 
@@ -22,7 +26,18 @@ namespace website.Infrastructure
                 options => options.UseSqlite(connectionString));
             services.AddSingleton<DatabaseInitializer>();
             services.AddTransient<IItemRepository, SqliteItemRepository>();
+            services.AddTransient<
+                IBattleReportImportRepository,
+                SqliteBattleReportImportRepository>();
+            services.AddTransient<
+                IBattleReportAnalysisPipeline,
+                NoOpBattleReportAnalysisPipeline>();
 
+            services.AddTransient<
+                IRequestHandler<
+                    ImportBattleReportCommand,
+                    BattleReportImportResultModel>,
+                ImportBattleReportCommandHandler>();
             services.AddTransient<
                 IRequestHandler<GetItemsQuery, IReadOnlyList<ItemModel>>,
                 GetItemsQueryHandler>();
