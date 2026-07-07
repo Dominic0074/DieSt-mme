@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <FrontendRoot>..\Frontend\</FrontendRoot>
+    <DefaultItemExcludes>$(DefaultItemExcludes);wwwroot\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\website.Application\website.Application.csproj" />
+    <ProjectReference Include="..\website.Domain\website.Domain.csproj" />
+    <ProjectReference Include="..\website.Infrastructure\website.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <Target
+    Name="BuildFrontend"
+    BeforeTargets="PrepareForBuild"
+    Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec
+      WorkingDirectory="$(FrontendRoot)"
+      Command="npm ci --no-audit --no-fund" />
+    <Exec
+      WorkingDirectory="$(FrontendRoot)"
+      Command="npm run build" />
+
+    <RemoveDir Directories="$(MSBuildProjectDirectory)\wwwroot" />
+    <ItemGroup>
+      <FrontendFiles Include="$(FrontendRoot)dist\**\*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(FrontendFiles)"
+      DestinationFiles="@(FrontendFiles->'$(MSBuildProjectDirectory)\wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <Content
+        Include="wwwroot\**\*"
+        CopyToOutputDirectory="PreserveNewest"
+        CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>

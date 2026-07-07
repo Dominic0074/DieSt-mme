@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-userscript.mjs"
+    "build": "node scripts/build-userscript.mjs",
+    "build:retime-save": "node scripts/build-retime-save.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.2"

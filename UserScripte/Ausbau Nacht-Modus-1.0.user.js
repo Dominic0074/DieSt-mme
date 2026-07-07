@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.25
-// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest Kaserne und Stall aus, Auto-Truppen-Schalter, Auto-Rekrutierung (AJAX-sicher) fuer Kaserne und Stall, Start von jeder Seite aus.
+// @version      1.26
+// @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest Dorf- und Raubzugtruppen am Versammlungsplatz aus, Auto-Truppen-Schalter, Auto-Rekrutierung (AJAX-sicher) fuer Kaserne und Stall, Start von jeder Seite aus.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
@@ -25,7 +25,7 @@ const RAID_CONFIG = {
   switchPages: true,
   returnToBuildings: true,
   limitToHomeUnits: true,   // Sicherheitsnetz: nie mehr senden, als gerade zuhause steht
-  readStableUnits: true,    // vor dem Raubzug auch den Stall (LKav/ber.Bogen/SKav) auslesen
+  readStableUnits: true,    // vor dem Raubzug auch die Auto-Rekrutierung im Stall ausfuehren
   enabledOptions: [1, 2, 3, 4],
   distributionMode: 'optimizedEqual',
   maxRaidDurationHours: 0,
@@ -126,7 +126,7 @@ const RAID_AUTO_ACTIVE_KEY = 'ds_raid_auto_active';
 const RAID_AUTOCALC_KEY = 'ds_raid_autocalc_v1';
 const RAID_PREFETCH_UNITS_KEY = 'ds_raid_prefetch_units_pending';
 const RAID_CONFIG_STORAGE_KEY = 'ds_raid_config_v1';
-const RAID_STORED_UNITS_KEY = 'ds_raid_stored_units_v1';
+const RAID_STORED_UNITS_KEY = 'ds_raid_stored_units_v2';
 const RECRUIT_CONFIG_STORAGE_KEY = 'ds_recruit_config_v1';
 const RECRUIT_LAST_ACTION_KEY = 'ds_recruit_last_action_at';
 const RECRUIT_LAST_ACTION_STABLE_KEY = 'ds_recruit_last_action_stable_at';
@@ -172,10 +172,6 @@ const RAID_DISTRIBUTION_LABELS = {
   optimizedEqual: 'gleich lang',
   optimizedRun: 'pro Lauf',
   optimizedHour: 'pro Stunde'
-};
-const RAID_RECRUIT_UNITS_BY_SCREEN = {
-  barracks: ['spear', 'sword', 'axe', 'archer'],
-  stable: ['light', 'marcher', 'heavy']
 };
 const BARRACKS_RECRUIT_UNITS = ['spear', 'sword', 'axe', 'archer'];
 const STABLE_RECRUIT_UNITS = ['light', 'marcher', 'heavy'];
@@ -228,6 +224,7 @@ function formatDuration(ms) {
 
 function getCurrentScriptPageName() {
   if (isScavengePage()) return 'Raubzuege';
+  if (isUnitsOverviewPage()) return 'Truppenuebersicht';
   if (isBuildingsOverviewPage()) return 'Gebaeude';
   if (isMainBuildingPage()) return 'Hauptgebaeude';
   if (getCurrentScreen() === 'barracks') return 'Kaserne';
@@ -752,7 +749,7 @@ function enterRaidCycleFromAnywhere() {
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return false; }
 
   // Seiten, die bereits Teil des Zyklus sind, behandeln sich selbst.
-  if (isBarracksPage() || isStablePage() || isScavengePage() || isBuildingsOverviewPage()) return false;
+  if (isBarracksPage() || isStablePage() || isUnitsOverviewPage() || isScavengePage() || isBuildingsOverviewPage()) return false;
 
   // Ueberall sonst: ueber die Kaserne in den Zyklus einsteigen.
   localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
@@ -767,8 +764,8 @@ async function handleRaidUnitPrefetch() {
   if (BOT_PROTECTION_TRIGGERED) return true;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
-  // Reihenfolge: Kaserne -> (optional) Stall -> Raubzugseite.
-  // Kaserne liest Speer/Schwert/Axt/Bogen, Stall liest LKav/ber.Bogen/SKav.
+  // Reihenfolge: Kaserne -> (optional) Stall -> Truppenuebersicht.
+  // Kaserne und Stall werden nur noch fuer die Auto-Rekrutierung besucht.
   const goToStableNext = isBarracksPage() && RAID_CONFIG.readStableUnits;
 
   // Auf der aktuellen Seite rekrutieren (AJAX, kein Reload). Die Funktion wartet
@@ -782,20 +779,35 @@ async function handleRaidUnitPrefetch() {
   if (!isRaidAutomationActive()) return true;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
-  storeCurrentRaidUnitsFromRecruitPages();
   await Sleep(random(RAID_CONFIG.preRaidReadDelayMin, RAID_CONFIG.preRaidReadDelayMax));
   if (BOT_PROTECTION_TRIGGERED) return true;
   if (!isRaidAutomationActive()) return true;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
-  storeCurrentRaidUnitsFromRecruitPages();
-
   if (goToStableNext) {
     window.location.href = getStableUrl();
   } else {
     localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
-    window.location.href = getScavengeUrl();
+    window.location.href = getUnitsOverviewUrl();
   }
+  return true;
+}
+
+async function handleRaidArmyOverview() {
+  if (!isUnitsOverviewPage()) return false;
+
+  const armyUnits = readArmyUnitsFromOverview();
+  saveStoredRaidUnits(armyUnits);
+  console.log(`Truppenbasis aktualisiert: ${formatRaidUnits(armyUnits) || 'keine Truppen'}.`);
+
+  if (!isRaidAutomationActive()) return false;
+  if (BOT_PROTECTION_TRIGGERED) return true;
+  if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
+
+  await Sleep(random(RAID_CONFIG.preRaidReadDelayMin, RAID_CONFIG.preRaidReadDelayMax));
+  if (BOT_PROTECTION_TRIGGERED || !isRaidAutomationActive()) return true;
+
+  window.location.href = getScavengeUrl();
   return true;
 }
 
@@ -1733,6 +1745,10 @@ function isScavengePage() {
   return location.href.includes('screen=place') && location.href.includes('mode=scavenge');
 }
 
+function isUnitsOverviewPage() {
+  return getCurrentScreen() === 'place' && new URLSearchParams(location.search).get('mode') === 'units';
+}
+
 function isBuildingsOverviewPage() {
   return location.href.includes('screen=overview_villages') && location.href.includes('mode=buildings');
 }
@@ -1785,6 +1801,10 @@ function getStableUrl() {
 
 function getScavengeUrl() {
   return buildGameUrl('place', 'scavenge');
+}
+
+function getUnitsOverviewUrl() {
+  return buildGameUrl('place', 'units');
 }
 
 function parseCountdownMs(text) {
@@ -2076,6 +2096,41 @@ function readStoredRaidUnits() {
 function saveStoredRaidUnits(units) {
   localStorage.setItem(RAID_STORED_UNITS_KEY, JSON.stringify(normalizeRaidUnits(units)));
 }
+function readUnitCountsFromRow(row) {
+  const result = getEmptyRaidUnits();
+  if (!row) return result;
+
+  RAID_UNITS.forEach(unit => {
+    const cell = row.querySelector(`.unit-item-${unit}[data-unit-count]`);
+    result[unit] = Math.max(0, Math.floor(Number(cell?.dataset.unitCount || 0)));
+  });
+  return result;
+}
+
+function addRaidUnits(first, second) {
+  const result = getEmptyRaidUnits();
+  RAID_UNITS.forEach(unit => {
+    result[unit] = Math.max(0, Number(first?.[unit] || 0)) + Math.max(0, Number(second?.[unit] || 0));
+  });
+  return normalizeRaidUnits(result);
+}
+
+function readArmyUnitsFromOverview() {
+  if (!isUnitsOverviewPage()) return getEmptyRaidUnits();
+
+  const homeRow = Array.from(document.querySelectorAll('#units_home tr'))
+    .find(row => row.querySelector('td') && row.querySelector('.unit-item[data-unit-count]'));
+  const homeUnits = readUnitCountsFromRow(homeRow);
+
+  const raidTable = Array.from(document.querySelectorAll('table.vis'))
+    .find(table => table.querySelector('a[href*="mode=scavenge"]') && table.querySelector('th.unit-item[data-unit-count]'));
+  const raidTotalRow = Array.from(raidTable?.querySelectorAll('tr') || [])
+    .reverse()
+    .find(row => row.querySelector('th.unit-item[data-unit-count]'));
+  const raidUnits = readUnitCountsFromRow(raidTotalRow);
+
+  return addRaidUnits(homeUnits, raidUnits);
+}
 
 function readAvailableRaidUnitsFromPage() {
   if (isRecruitPage()) return readAvailableRaidUnitsFromRecruitPage();
@@ -2142,7 +2197,6 @@ async function runAutoRecruitmentForUnits(units, lastActionKey, screen) {
 
   const form = document.querySelector('#train_form');
   if (!form) return false;
-  storeCurrentRaidUnitsFromRecruitPages();
 
   let totalQueued = 0;
 
@@ -2188,29 +2242,10 @@ async function runStableAutoRecruitment() {
   return runAutoRecruitmentForUnits(STABLE_RECRUIT_UNITS, RECRUIT_LAST_ACTION_STABLE_KEY, 'stable');
 }
 
-function storeCurrentRaidUnitsFromRecruitPages() {
-  if (!isRecruitPage()) return;
-
-  const screen = getCurrentScreen();
-  const relevantUnits = RAID_RECRUIT_UNITS_BY_SCREEN[screen] || [];
-  const pageUnits = readAvailableRaidUnitsFromPage();
-  const storedUnits = readStoredRaidUnits();
-  const foundRelevantUnits = relevantUnits.some(unit => Number(pageUnits[unit] || 0) > 0);
-  if (!foundRelevantUnits) return;
-
-  relevantUnits.forEach(unit => {
-    storedUnits[unit] = Math.max(0, Math.floor(Number(pageUnits[unit] || 0)));
-  });
-
-  saveStoredRaidUnits(storedUnits);
-}
-
 function readAvailableRaidUnits() {
   const pageUnits = normalizeRaidUnits(readAvailableRaidUnitsFromPage());
-  if (sumRaidUnits(pageUnits) > 0) {
-    saveStoredRaidUnits(pageUnits);
-    return pageUnits;
-  }
+  if (sumRaidUnits(pageUnits) > 0) return pageUnits;
+
 
   return readStoredRaidUnits();
 }
@@ -2220,17 +2255,15 @@ function readScavengeHomeUnits() {
   return normalizeRaidUnits(readAvailableRaidUnitsFromPage());
 }
 
-// GEAENDERT: Quelle fuer die Verteilungsrechnung ist jetzt der GESAMTBESTAND
-// aus der Kaserne/dem Stall ("Insgesamt"), nicht nur die zuhause stehenden Truppen.
+// Quelle fuer die Verteilungsrechnung: Truppen im Dorf plus Truppen auf
+// Raubzuegen, ausgelesen auf dem Versammlungsplatz unter "Truppen".
 function readAvailableRaidUnitsForSending() {
-  // Vorzug: Gesamtbestand (inkl. unterwegs) – zuletzt in der Kaserne/im Stall ausgelesen.
-  const storedTotals = readStoredRaidUnits();
-  if (sumRaidUnits(storedTotals) > 0) return storedTotals;
+  const storedArmy = readStoredRaidUnits();
+  if (sumRaidUnits(storedArmy) > 0) return storedArmy;
 
-  // Fallback, falls noch nichts gespeichert wurde: zuhause stehende Truppen.
+  // Fallback bei einem manuellen Start direkt auf der Raubzugseite.
   return readScavengeHomeUnits();
 }
-
 function setRaidInputValue(input, value) {
   input.value = String(value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2694,7 +2727,7 @@ function insertRaidPanel() {
   });
 }
 
-// GEAENDERT: Plant die Verteilung jetzt auf Basis des GESAMTBESTANDS (Kaserne)
+// Plant die Verteilung auf Basis von Dorftruppen plus laufenden Raubzuegen
 // und begrenzt den tatsaechlichen Versand auf die zuhause stehenden Truppen.
 async function startScavengingRaids() {
   if (!RAID_CONFIG.enabled || !isScavengePage()) return;
@@ -2728,10 +2761,10 @@ async function startScavengingRaids() {
       return;
     }
 
-    // Verteilung auf Basis des GESAMTBESTANDS (Kaserne "Insgesamt") berechnen.
+    // Verteilung auf Basis von Dorftruppen plus laufenden Raubzuegen berechnen.
     const totalUnits = readAvailableRaidUnitsForSending();
     if (sumRaidUnits(totalUnits) === 0) {
-      setStatus('Kein Truppenbestand bekannt (Kaserne noch nicht ausgelesen?).');
+      setStatus('Kein Truppenbestand bekannt (Truppenuebersicht noch nicht ausgelesen?).');
       storeNextRaidReadyAt();
       await returnToBuildingsOverview();
       return;
@@ -2890,7 +2923,6 @@ async function startNightBuilding() {
   loadPersistentRaidConfig();
   loadPersistentRecruitConfig();
   loadPersistentNightQueue();
-  storeCurrentRaidUnitsFromRecruitPages();
   storeCurrentNightLevelsFromMainPage();
   storeCurrentNightLevelsFromBuildingsOverview();
   initStatusBanner();
@@ -2909,15 +2941,18 @@ async function startNightBuilding() {
 
   handleRaidUnitPrefetch().then(prefetchHandled => {
     if (prefetchHandled) return;
-    // Manueller Besuch ohne aktive Automatik: trotzdem rekrutieren (ohne zu navigieren).
-    if (!isRaidAutomationActive()) {
-      runBarracksAutoRecruitment();
-      runStableAutoRecruitment();
-      return;
-    }
-    if (RAID_CONFIG.autoStart && isScavengePage()) {
-      startScavengingRaids();
-    }
+    handleRaidArmyOverview().then(overviewHandled => {
+      if (overviewHandled) return;
+      // Manueller Besuch ohne aktive Automatik: trotzdem rekrutieren (ohne zu navigieren).
+      if (!isRaidAutomationActive()) {
+        runBarracksAutoRecruitment();
+        runStableAutoRecruitment();
+        return;
+      }
+      if (RAID_CONFIG.autoStart && isScavengePage()) {
+        startScavengingRaids();
+      }
+    });
   });
 
   startNightBuilding();

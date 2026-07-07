@@ -1,0 +1,22 @@
+@website_Api_HostAddress = http://localhost:5184
+
+GET {{website_Api_HostAddress}}/api/items
+Accept: application/json
+
+###
+
+POST {{website_Api_HostAddress}}/api/items
+Content-Type: application/json
+
+{
+  "name": "Beispieleintrag"
+}
+
+###
+
+GET {{website_Api_HostAddress}}/api/items/00000000-0000-0000-0000-000000000000
+Accept: application/json
+
+###
+
+DELETE {{website_Api_HostAddress}}/api/items/00000000-0000-0000-0000-000000000000

@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.db
+*.db-shm
+*.db-wal
+Frontend/node_modules/
+Frontend/dist/
+website.Api/wwwroot/
