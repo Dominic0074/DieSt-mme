@@ -1,140 +1,64 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import AuthPage from './components/auth/AuthPage.vue'
+import DashboardShell from './components/dashboard/DashboardShell.vue'
+import { getSession, logout as logoutUser } from './services/authService'
 
-const items = ref([])
-const newItemName = ref('')
-const isLoading = ref(false)
+const session = ref({ isAuthenticated: false, user: null })
+const isLoading = ref(true)
+const isSubmitting = ref(false)
 const errorMessage = ref('')
 
-async function loadItems() {
+async function loadSession() {
   isLoading.value = true
   errorMessage.value = ''
 
   try {
-    const response = await fetch('/api/items')
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    items.value = await response.json()
+    session.value = await getSession()
   } catch (error) {
-    errorMessage.value = `Einträge konnten nicht geladen werden: ${error.message}`
+    errorMessage.value = `Session konnte nicht geladen werden: ${error.message}`
   } finally {
     isLoading.value = false
   }
 }
 
-async function createItem() {
-  const name = newItemName.value.trim()
-  if (!name) {
-    return
-  }
+function handleAuthenticated(nextSession) {
+  session.value = nextSession
+  errorMessage.value = ''
+}
 
+async function handleLogout() {
+  isSubmitting.value = true
   errorMessage.value = ''
 
   try {
-    const response = await fetch('/api/items', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    const item = await response.json()
-    items.value.unshift(item)
-    newItemName.value = ''
+    await logoutUser()
+    session.value = { isAuthenticated: false, user: null }
   } catch (error) {
-    errorMessage.value = `Eintrag konnte nicht angelegt werden: ${error.message}`
+    errorMessage.value = `Logout fehlgeschlagen: ${error.message}`
+  } finally {
+    isSubmitting.value = false
   }
 }
 
-async function deleteItem(id) {
-  errorMessage.value = ''
-
-  try {
-    const response = await fetch(`/api/items/${id}`, {
-      method: 'DELETE',
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    items.value = items.value.filter((item) => item.id !== id)
-  } catch (error) {
-    errorMessage.value = `Eintrag konnte nicht gelöscht werden: ${error.message}`
-  }
-}
-
-onMounted(loadItems)
+onMounted(loadSession)
 </script>
 
 <template>
   <main class="page">
-    <section class="hero">
-      <p class="eyebrow">ASP.NET Core + Vue</p>
-      <h1>website</h1>
-      <p class="intro">
-        Das Frontend wird gemeinsam mit der API gebaut und direkt von ASP.NET
-        Core ausgeliefert.
-      </p>
-    </section>
+    <DashboardShell
+      v-if="session.isAuthenticated"
+      :session="session"
+      :is-submitting="isSubmitting"
+      :error-message="errorMessage"
+      @logout="handleLogout"
+    />
 
-    <section class="panel" aria-labelledby="items-heading">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">Beispiel-Workflow</p>
-          <h2 id="items-heading">Einträge</h2>
-        </div>
-        <button class="secondary" type="button" @click="loadItems">
-          Aktualisieren
-        </button>
-      </div>
-
-      <form class="create-form" @submit.prevent="createItem">
-        <label for="item-name">Neuer Eintrag</label>
-        <div class="input-row">
-          <input
-            id="item-name"
-            v-model="newItemName"
-            maxlength="200"
-            placeholder="Name eingeben"
-          />
-          <button type="submit" :disabled="!newItemName.trim()">
-            Hinzufügen
-          </button>
-        </div>
-      </form>
-
-      <p v-if="errorMessage" class="message error" role="alert">
-        {{ errorMessage }}
-      </p>
-      <p v-else-if="isLoading" class="message">Einträge werden geladen …</p>
-      <p v-else-if="items.length === 0" class="message">
-        Noch keine Einträge vorhanden.
-      </p>
-
-      <ul v-else class="item-list">
-        <li v-for="item in items" :key="item.id">
-          <div>
-            <strong>{{ item.name }}</strong>
-            <span>{{ new Date(item.createdAt).toLocaleString('de-DE') }}</span>
-          </div>
-          <button
-            class="danger"
-            type="button"
-            :aria-label="`${item.name} löschen`"
-            @click="deleteItem(item.id)"
-          >
-            Löschen
-          </button>
-        </li>
-      </ul>
-    </section>
+    <AuthPage
+      v-else
+      :is-loading="isLoading"
+      :initial-error-message="errorMessage"
+      @authenticated="handleAuthenticated"
+    />
   </main>
 </template>

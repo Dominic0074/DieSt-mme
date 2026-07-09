@@ -1,14 +1,10 @@
-namespace website.Infrastructure.Database.Entities
+namespace website.Domain.Models.AppUsers
 {
-    public sealed class AppUserEntity
+    public sealed class AppUserModel
     {
         public Guid Id { get; set; }
 
         public string LoginEmail { get; set; } = string.Empty;
-
-        public string NormalizedEmail { get; set; } = string.Empty;
-
-        public string PasswordHash { get; set; } = string.Empty;
 
         public DateTime CreatedAtUtc { get; set; }
 

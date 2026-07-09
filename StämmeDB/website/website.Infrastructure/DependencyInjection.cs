@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using website.Application.AppUsers;
 using website.Application.BattleReports;
 using website.Application.CommandHandlers.BattleReports;
 using website.Application.CommandHandlers.Items;
@@ -23,6 +24,7 @@ using website.Domain.Models.WorldPlayers;
 using website.Domain.Models.WorldVillages;
 using website.Infrastructure.Database;
 using website.Infrastructure.Repositories;
+using website.Infrastructure.Security;
 
 namespace website.Infrastructure
 {
@@ -35,6 +37,11 @@ namespace website.Infrastructure
             services.AddDbContextFactory<AppDbContext>(
                 options => options.UseSqlite(connectionString));
             services.AddSingleton<DatabaseInitializer>();
+            services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
+            services.AddScoped<
+                IAppUserAuthenticationService,
+                AppUserAuthenticationService>();
+            services.AddTransient<IAppUserRepository, SqliteAppUserRepository>();
             services.AddTransient<IItemRepository, SqliteItemRepository>();
             services.AddTransient<
                 IBattleReportImportRepository,
