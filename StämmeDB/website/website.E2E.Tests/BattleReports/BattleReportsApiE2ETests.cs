@@ -1,26 +1,17 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
-using System.Text.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 
 namespace website.E2E.Tests.BattleReports;
 
 public sealed class BattleReportsApiE2ETests
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     [Fact]
     public async Task Import_Then_GetAll_ReturnsImportedBattleReport()
     {
-        await using var app = new BattleReportsApiFactory();
-        using var client = CreateClient(app);
+        await using var app = new TestBattleReportsApiFactory();
+        using var client = app.CreateHttpsClient();
 
-        var imported = await ImportFixtureAsync(client);
+        var imported = await BattleReportFixtureClient.ImportDefaultFixtureAsync(client);
 
         var reports = await GetReportsAsync(client, "/api/BattleReports");
 
@@ -57,10 +48,10 @@ public sealed class BattleReportsApiE2ETests
     public async Task GetBattleReports_WithSearchFilter_ReturnsMatchingBattleReport(
         string requestUri)
     {
-        await using var app = new BattleReportsApiFactory();
-        using var client = CreateClient(app);
+        await using var app = new TestBattleReportsApiFactory();
+        using var client = app.CreateHttpsClient();
 
-        var imported = await ImportFixtureAsync(client);
+        var imported = await BattleReportFixtureClient.ImportDefaultFixtureAsync(client);
 
         var reports = await GetReportsAsync(client, requestUri);
 
@@ -72,10 +63,10 @@ public sealed class BattleReportsApiE2ETests
     [Fact]
     public async Task GetBattleReports_ByInternalId_ReturnsMatchingBattleReport()
     {
-        await using var app = new BattleReportsApiFactory();
-        using var client = CreateClient(app);
+        await using var app = new TestBattleReportsApiFactory();
+        using var client = app.CreateHttpsClient();
 
-        var imported = await ImportFixtureAsync(client);
+        var imported = await BattleReportFixtureClient.ImportDefaultFixtureAsync(client);
 
         var reports = await GetReportsAsync(
             client,
@@ -89,52 +80,16 @@ public sealed class BattleReportsApiE2ETests
     [Fact]
     public async Task GetBattleReports_WithUnknownPlayer_ReturnsEmptyList()
     {
-        await using var app = new BattleReportsApiFactory();
-        using var client = CreateClient(app);
+        await using var app = new TestBattleReportsApiFactory();
+        using var client = app.CreateHttpsClient();
 
-        await ImportFixtureAsync(client);
+        await BattleReportFixtureClient.ImportDefaultFixtureAsync(client);
 
         var reports = await GetReportsAsync(
             client,
             "/api/BattleReports?playerName=does-not-exist");
 
         Assert.Empty(reports);
-    }
-
-    private static async Task<BattleReportImportResult> ImportFixtureAsync(
-        HttpClient client)
-    {
-        var request = await File.ReadAllTextAsync(
-            Path.Combine(
-                AppContext.BaseDirectory,
-                "fixtures",
-                "battle-reports",
-                "de256-report-2742569.json"));
-
-        using var content = new StringContent(
-            request,
-            Encoding.UTF8,
-            "application/json");
-        using var response = await client.PostAsync(
-            "/api/BattleReports/import",
-            content);
-
-        Assert.True(
-            response.StatusCode is HttpStatusCode.Created or HttpStatusCode.OK,
-            $"Expected 200 OK or 201 Created, got {(int)response.StatusCode} {response.StatusCode}.");
-
-        var result = await response.Content
-            .ReadFromJsonAsync<BattleReportImportResult>(JsonOptions);
-
-        return Assert.IsType<BattleReportImportResult>(result);
-    }
-
-    private static HttpClient CreateClient(BattleReportsApiFactory app)
-    {
-        return app.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            BaseAddress = new Uri("https://localhost")
-        });
     }
 
     private static async Task<IReadOnlyList<BattleReportResponse>> GetReportsAsync(
@@ -146,54 +101,11 @@ public sealed class BattleReportsApiE2ETests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var reports = await response.Content
-            .ReadFromJsonAsync<List<BattleReportResponse>>(JsonOptions);
+            .ReadFromJsonAsync<List<BattleReportResponse>>(
+                BattleReportFixtureClient.JsonOptions);
 
         return Assert.IsType<List<BattleReportResponse>>(reports);
     }
-
-    private sealed class BattleReportsApiFactory : WebApplicationFactory<Program>
-    {
-        private readonly string _databasePath = Path.Combine(
-            Path.GetTempPath(),
-            $"website-e2e-{Guid.NewGuid():N}.db");
-
-        protected override void ConfigureWebHost(
-            Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
-        {
-            builder.ConfigureAppConfiguration((_, configuration) =>
-            {
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["ConnectionStrings:DefaultConnection"] =
-                        $"Data Source={_databasePath}"
-                });
-            });
-        }
-
-        public override async ValueTask DisposeAsync()
-        {
-            await base.DisposeAsync();
-
-            TryDelete(_databasePath);
-            TryDelete($"{_databasePath}-shm");
-            TryDelete($"{_databasePath}-wal");
-        }
-
-        private static void TryDelete(string path)
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-    }
-
-    private sealed record BattleReportImportResult(
-        Guid BattleReportId,
-        string World,
-        long GameReportId,
-        bool WasCreated,
-        bool AnalysisPipelineTriggered);
 
     private sealed record BattleReportResponse(
         Guid Id,

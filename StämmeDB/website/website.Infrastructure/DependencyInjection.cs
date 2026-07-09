@@ -8,11 +8,19 @@ using website.Application.Commands.Items;
 using website.Application.CQRS;
 using website.Application.Queries.BattleReports;
 using website.Application.Queries.Items;
+using website.Application.Queries.WorldPlayers;
+using website.Application.Queries.WorldVillages;
 using website.Application.QueryHandlers.BattleReports;
 using website.Application.QueryHandlers.Items;
+using website.Application.QueryHandlers.WorldPlayers;
+using website.Application.QueryHandlers.WorldVillages;
 using website.Application.Repositories;
+using website.Application.WorldPlayers;
+using website.Application.WorldVillages;
 using website.Domain.Models;
 using website.Domain.Models.BattleReports;
+using website.Domain.Models.WorldPlayers;
+using website.Domain.Models.WorldVillages;
 using website.Infrastructure.Database;
 using website.Infrastructure.Repositories;
 
@@ -35,6 +43,12 @@ namespace website.Infrastructure
                 IBattleReportReadRepository,
                 SqliteBattleReportReadRepository>();
             services.AddTransient<
+                IWorldPlayerReadRepository,
+                SqliteWorldPlayerReadRepository>();
+            services.AddTransient<
+                IWorldVillageReadRepository,
+                SqliteWorldVillageReadRepository>();
+            services.AddTransient<
                 IBattleReportAnalysisPipeline,
                 NoOpBattleReportAnalysisPipeline>();
 
@@ -48,6 +62,16 @@ namespace website.Infrastructure
                     GetBattleReportsQuery,
                     IReadOnlyList<BattleReportModel>>,
                 GetBattleReportsQueryHandler>();
+            services.AddTransient<
+                IRequestHandler<
+                    GetWorldPlayersQuery,
+                    IReadOnlyList<WorldPlayerModel>>,
+                GetWorldPlayersQueryHandler>();
+            services.AddTransient<
+                IRequestHandler<
+                    GetWorldVillagesQuery,
+                    IReadOnlyList<WorldVillageModel>>,
+                GetWorldVillagesQueryHandler>();
             services.AddTransient<
                 IRequestHandler<GetItemsQuery, IReadOnlyList<ItemModel>>,
                 GetItemsQueryHandler>();
