@@ -5,11 +5,13 @@ import { StatusBanner } from './ui/status-banner.js';
 const RUNNING_STORAGE_KEY = 'massRecruting.running';
 const PHASE_STORAGE_KEY = 'massRecruting.phase';
 const STOPPED_STORAGE_KEY = 'massRecruting.stopped';
+const NEXT_RUN_AT_STORAGE_KEY = 'massRecruting.nextRunAt';
 const MASS_SCAVENGE_SCRIPT_URL = 'https://shinko-to-kuma.com/scripts/massScavenge.js';
 const MIN_DELAY_MS = 1000;
 const MAX_DELAY_MS = 3000;
 const BUTTON_WAIT_TIMEOUT_MS = 20000;
 const BUTTON_WAIT_INTERVAL_MS = 250;
+const CYCLE_DELAY_MS = 3 * 60 * 60 * 1000;
 
 export class App {
   constructor() {
@@ -22,6 +24,8 @@ export class App {
         this.state.runtime.running = false;
         this.state.runtime.status = 'Safety erkannt';
         this.persistRunning(false);
+        this.persistPhase('');
+        this.persistNextRunAt(null);
         this.banner.update();
       }
     });
@@ -44,6 +48,7 @@ export class App {
     this.clearScheduledActions();
     this.persistStopped(false);
     this.persistPhase('');
+    this.persistNextRunAt(null);
     const token = this.runToken;
 
     if (this.botProtection.checkNow()) return;
@@ -69,6 +74,7 @@ export class App {
     this.state.runtime.status = 'angehalten';
     this.persistRunning(false);
     this.persistPhase('');
+    this.persistNextRunAt(null);
     this.persistStopped(true);
     this.banner.update();
   }
@@ -78,6 +84,11 @@ export class App {
     if (!this.state.runtime.running) return;
 
     const phase = this.readPersistedPhase();
+    if (phase === 'timer_wait') {
+      this.scheduleNextCycle();
+      return;
+    }
+
     if (phase === 'calculate_runtimes') {
       this.scheduleCalculateRuntimesClick();
       return;
@@ -176,10 +187,38 @@ export class App {
       this.setStatus('klicke Launch');
       this.activateElement(button);
       this.setStatus('Launch geklickt');
-      this.state.runtime.running = false;
-      this.persistRunning(false);
+      this.startCycleTimer();
+    }, delay);
+  }
+
+  startCycleTimer() {
+    const nextRunAt = Date.now() + CYCLE_DELAY_MS;
+    this.persistNextRunAt(nextRunAt);
+    this.persistPhase('timer_wait');
+    this.persistRunning(true);
+    this.setStatus(`naechster Start ${this.formatTime(nextRunAt)}`);
+
+    window.location.href = this.buildOverviewUrl();
+  }
+
+  scheduleNextCycle() {
+    const token = this.runToken;
+    const nextRunAt = this.readPersistedNextRunAt();
+    if (!nextRunAt) {
+      this.failRun('Timer fehlt');
+      return;
+    }
+
+    const delay = Math.max(0, nextRunAt - Date.now());
+    this.setStatus(delay > 0 ? `naechster Start ${this.formatTime(nextRunAt)}` : 'starte erneut');
+
+    this.schedule(async () => {
+      if (!this.canContinue(token)) return;
+      if (this.botProtection.checkNow()) return;
+
+      this.persistNextRunAt(null);
       this.persistPhase('');
-      this.banner.update();
+      await this.startMassRecruting();
     }, delay);
   }
 
@@ -260,6 +299,7 @@ export class App {
     this.state.runtime.status = status;
     this.persistRunning(false);
     this.persistPhase('');
+    this.persistNextRunAt(null);
     this.banner.update();
     console.warn(`[Mass Recruting] ${status}.`);
   }
@@ -267,6 +307,16 @@ export class App {
   setStatus(status) {
     this.state.runtime.status = status;
     this.banner.update();
+  }
+
+  updateTimerStatus() {
+    if (this.readPersistedPhase() !== 'timer_wait' || this.readPersistedStopped()) return;
+
+    const nextRunAt = this.readPersistedNextRunAt();
+    if (!nextRunAt) return;
+
+    const remainingMs = Math.max(0, nextRunAt - Date.now());
+    this.state.runtime.status = `Timer ${this.formatDuration(remainingMs)}`;
   }
 
   getRandomDelayMs() {
@@ -277,6 +327,13 @@ export class App {
     if (this.readPersistedStopped()) {
       this.state.runtime.running = false;
       this.state.runtime.status = 'angehalten';
+      return;
+    }
+
+    if (this.readPersistedPhase() === 'timer_wait') {
+      const nextRunAt = this.readPersistedNextRunAt();
+      this.state.runtime.running = true;
+      this.state.runtime.status = nextRunAt ? `naechster Start ${this.formatTime(nextRunAt)}` : 'Timer fehlt';
       return;
     }
 
@@ -316,6 +373,27 @@ export class App {
         window.localStorage?.setItem(PHASE_STORAGE_KEY, phase);
       } else {
         window.localStorage?.removeItem(PHASE_STORAGE_KEY);
+      }
+    } catch {
+      // Ignored: the in-memory state still controls the current page.
+    }
+  }
+
+  readPersistedNextRunAt() {
+    try {
+      const value = Number(window.localStorage?.getItem(NEXT_RUN_AT_STORAGE_KEY));
+      return Number.isFinite(value) && value > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  persistNextRunAt(timestamp) {
+    try {
+      if (timestamp) {
+        window.localStorage?.setItem(NEXT_RUN_AT_STORAGE_KEY, String(timestamp));
+      } else {
+        window.localStorage?.removeItem(NEXT_RUN_AT_STORAGE_KEY);
       }
     } catch {
       // Ignored: the in-memory state still controls the current page.
@@ -487,6 +565,36 @@ export class App {
     return params.get('screen') === 'place' && params.get('mode') === 'scavenge_mass';
   }
 
+  buildOverviewUrl() {
+    const url = new URL(window.location.href);
+    const villageId = url.searchParams.get('village') || window.game_data?.village?.id || '';
+
+    url.pathname = '/game.php';
+    url.search = '';
+    if (villageId) url.searchParams.set('village', villageId);
+    url.searchParams.set('screen', 'overview');
+    url.hash = '';
+
+    return url.toString();
+  }
+
+  formatTime(timestamp) {
+    return new Date(timestamp).toLocaleTimeString('de-DE', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  }
+
+  formatDuration(ms) {
+    const totalSeconds = Math.ceil(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
   normalizeText(value) {
     return String(value)
       .toLowerCase()
@@ -504,6 +612,7 @@ export class App {
     if (this.bannerIntervalId) return;
 
     this.bannerIntervalId = window.setInterval(() => {
+      this.updateTimerStatus();
       this.banner.update();
     }, 1000);
   }

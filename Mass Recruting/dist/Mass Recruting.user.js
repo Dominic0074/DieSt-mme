@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.26
+// @version      0.1.27
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -264,11 +264,13 @@
   var RUNNING_STORAGE_KEY = "massRecruting.running";
   var PHASE_STORAGE_KEY = "massRecruting.phase";
   var STOPPED_STORAGE_KEY = "massRecruting.stopped";
+  var NEXT_RUN_AT_STORAGE_KEY = "massRecruting.nextRunAt";
   var MASS_SCAVENGE_SCRIPT_URL = "https://shinko-to-kuma.com/scripts/massScavenge.js";
   var MIN_DELAY_MS = 1e3;
   var MAX_DELAY_MS = 3e3;
   var BUTTON_WAIT_TIMEOUT_MS = 2e4;
   var BUTTON_WAIT_INTERVAL_MS = 250;
+  var CYCLE_DELAY_MS = 3 * 60 * 60 * 1e3;
   var App = class {
     constructor() {
       this.state = createDefaultState();
@@ -280,6 +282,8 @@
           this.state.runtime.running = false;
           this.state.runtime.status = "Safety erkannt";
           this.persistRunning(false);
+          this.persistPhase("");
+          this.persistNextRunAt(null);
           this.banner.update();
         }
       });
@@ -300,6 +304,7 @@
       this.clearScheduledActions();
       this.persistStopped(false);
       this.persistPhase("");
+      this.persistNextRunAt(null);
       const token = this.runToken;
       if (this.botProtection.checkNow()) return;
       this.state.runtime.running = true;
@@ -320,6 +325,7 @@
       this.state.runtime.status = "angehalten";
       this.persistRunning(false);
       this.persistPhase("");
+      this.persistNextRunAt(null);
       this.persistStopped(true);
       this.banner.update();
     }
@@ -327,6 +333,10 @@
       if (this.readPersistedStopped()) return;
       if (!this.state.runtime.running) return;
       const phase = this.readPersistedPhase();
+      if (phase === "timer_wait") {
+        this.scheduleNextCycle();
+        return;
+      }
       if (phase === "calculate_runtimes") {
         this.scheduleCalculateRuntimesClick();
         return;
@@ -408,10 +418,32 @@
         this.setStatus("klicke Launch");
         this.activateElement(button);
         this.setStatus("Launch geklickt");
-        this.state.runtime.running = false;
-        this.persistRunning(false);
+        this.startCycleTimer();
+      }, delay);
+    }
+    startCycleTimer() {
+      const nextRunAt = Date.now() + CYCLE_DELAY_MS;
+      this.persistNextRunAt(nextRunAt);
+      this.persistPhase("timer_wait");
+      this.persistRunning(true);
+      this.setStatus(`naechster Start ${this.formatTime(nextRunAt)}`);
+      window.location.href = this.buildOverviewUrl();
+    }
+    scheduleNextCycle() {
+      const token = this.runToken;
+      const nextRunAt = this.readPersistedNextRunAt();
+      if (!nextRunAt) {
+        this.failRun("Timer fehlt");
+        return;
+      }
+      const delay = Math.max(0, nextRunAt - Date.now());
+      this.setStatus(delay > 0 ? `naechster Start ${this.formatTime(nextRunAt)}` : "starte erneut");
+      this.schedule(async () => {
+        if (!this.canContinue(token)) return;
+        if (this.botProtection.checkNow()) return;
+        this.persistNextRunAt(null);
         this.persistPhase("");
-        this.banner.update();
+        await this.startMassRecruting();
       }, delay);
     }
     async waitForCalculateRuntimesButton(token) {
@@ -476,12 +508,20 @@
       this.state.runtime.status = status;
       this.persistRunning(false);
       this.persistPhase("");
+      this.persistNextRunAt(null);
       this.banner.update();
       console.warn(`[Mass Recruting] ${status}.`);
     }
     setStatus(status) {
       this.state.runtime.status = status;
       this.banner.update();
+    }
+    updateTimerStatus() {
+      if (this.readPersistedPhase() !== "timer_wait" || this.readPersistedStopped()) return;
+      const nextRunAt = this.readPersistedNextRunAt();
+      if (!nextRunAt) return;
+      const remainingMs = Math.max(0, nextRunAt - Date.now());
+      this.state.runtime.status = `Timer ${this.formatDuration(remainingMs)}`;
     }
     getRandomDelayMs() {
       return Math.floor(MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS + 1));
@@ -490,6 +530,12 @@
       if (this.readPersistedStopped()) {
         this.state.runtime.running = false;
         this.state.runtime.status = "angehalten";
+        return;
+      }
+      if (this.readPersistedPhase() === "timer_wait") {
+        const nextRunAt = this.readPersistedNextRunAt();
+        this.state.runtime.running = true;
+        this.state.runtime.status = nextRunAt ? `naechster Start ${this.formatTime(nextRunAt)}` : "Timer fehlt";
         return;
       }
       if (this.readPersistedRunning() || this.readPersistedPhase()) {
@@ -523,6 +569,24 @@
           window.localStorage?.setItem(PHASE_STORAGE_KEY, phase);
         } else {
           window.localStorage?.removeItem(PHASE_STORAGE_KEY);
+        }
+      } catch {
+      }
+    }
+    readPersistedNextRunAt() {
+      try {
+        const value = Number(window.localStorage?.getItem(NEXT_RUN_AT_STORAGE_KEY));
+        return Number.isFinite(value) && value > 0 ? value : null;
+      } catch {
+        return null;
+      }
+    }
+    persistNextRunAt(timestamp) {
+      try {
+        if (timestamp) {
+          window.localStorage?.setItem(NEXT_RUN_AT_STORAGE_KEY, String(timestamp));
+        } else {
+          window.localStorage?.removeItem(NEXT_RUN_AT_STORAGE_KEY);
         }
       } catch {
       }
@@ -656,12 +720,37 @@
       const params = new URLSearchParams(window.location.search);
       return params.get("screen") === "place" && params.get("mode") === "scavenge_mass";
     }
+    buildOverviewUrl() {
+      const url = new URL(window.location.href);
+      const villageId = url.searchParams.get("village") || window.game_data?.village?.id || "";
+      url.pathname = "/game.php";
+      url.search = "";
+      if (villageId) url.searchParams.set("village", villageId);
+      url.searchParams.set("screen", "overview");
+      url.hash = "";
+      return url.toString();
+    }
+    formatTime(timestamp) {
+      return new Date(timestamp).toLocaleTimeString("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+    formatDuration(ms) {
+      const totalSeconds = Math.ceil(ms / 1e3);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor(totalSeconds % 3600 / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
     normalizeText(value) {
       return String(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, " ").trim();
     }
     startBannerTicker() {
       if (this.bannerIntervalId) return;
       this.bannerIntervalId = window.setInterval(() => {
+        this.updateTimerStatus();
         this.banner.update();
       }, 1e3);
     }
