@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.22
+// @version      0.1.23
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -263,6 +263,7 @@
   // Mass Recruting/src/app.js
   var RUNNING_STORAGE_KEY = "massRecruting.running";
   var PHASE_STORAGE_KEY = "massRecruting.phase";
+  var MASS_SCAVENGE_SCRIPT_URL = "https://shinko-to-kuma.com/scripts/massScavenge.js";
   var MIN_DELAY_MS = 1e3;
   var MAX_DELAY_MS = 3e3;
   var BUTTON_WAIT_TIMEOUT_MS = 2e4;
@@ -293,32 +294,22 @@
       this.startBannerTicker();
       this.resumeIfRunning();
     }
-    startMassRecruting() {
+    async startMassRecruting() {
       this.runToken += 1;
       this.clearScheduledActions();
       this.persistPhase("");
+      const token = this.runToken;
       if (this.botProtection.checkNow()) return;
       this.state.runtime.running = true;
       this.persistRunning(true);
-      if (this.isMassScavengePage()) {
+      this.state.runtime.status = "lade Raubzug";
+      this.persistPhase("open_mass_scavenge");
+      this.banner.update();
+      const loaded = await this.loadMassScavengeTool();
+      if (loaded && this.canContinue(token) && this.isMassScavengePage()) {
+        this.persistPhase("calculate_runtimes");
         this.scheduleCalculateRuntimesClick();
-        return;
       }
-      this.state.runtime.status = "klicke Raubzug";
-      this.persistPhase("second_raid_click");
-      this.banner.update();
-      const raidMenuLink = this.findRaidMenuLink();
-      if (raidMenuLink) {
-        this.activateElement(raidMenuLink);
-        this.scheduleSecondRaidClick();
-        return;
-      }
-      this.state.runtime.status = "Raubzug nicht gefunden";
-      this.state.runtime.running = false;
-      this.persistRunning(false);
-      this.persistPhase("");
-      this.banner.update();
-      console.warn("[Mass Recruting] Raubzug-Link in der Menueleiste nicht gefunden.");
     }
     stopMassRecruting() {
       this.runToken += 1;
@@ -332,31 +323,45 @@
     resumeIfRunning() {
       if (!this.state.runtime.running) return;
       const phase = this.readPersistedPhase();
-      if (phase === "calculate_runtimes" || this.isMassScavengePage()) {
+      if (phase === "calculate_runtimes") {
         this.scheduleCalculateRuntimesClick();
         return;
       }
-      if (phase === "second_raid_click") {
-        this.scheduleSecondRaidClick();
+      if (phase === "open_mass_scavenge" || this.isMassScavengePage()) {
+        this.scheduleMassScavengeToolLoad();
       }
     }
-    scheduleSecondRaidClick() {
+    scheduleMassScavengeToolLoad() {
       const token = this.runToken;
       const delay = this.getRandomDelayMs();
       this.setStatus(`warte ${delay} ms`);
       this.schedule(async () => {
         if (!this.canContinue(token)) return;
         if (this.botProtection.checkNow()) return;
-        const raidMenuLink = this.findRaidMenuLink();
-        if (!raidMenuLink) {
-          this.failRun("Raubzug nicht gefunden");
-          return;
-        }
-        this.setStatus("klicke Raubzug erneut");
+        this.setStatus("lade Massenraubzug");
         this.persistPhase("calculate_runtimes");
-        this.activateElement(raidMenuLink);
-        this.scheduleCalculateRuntimesClick();
+        const loaded = await this.loadMassScavengeTool();
+        if (loaded && this.canContinue(token)) {
+          this.scheduleCalculateRuntimesClick();
+        }
       }, delay);
+    }
+    async loadMassScavengeTool() {
+      if (!window.jQuery?.getScript && !window.$?.getScript) {
+        this.failRun("jQuery fehlt");
+        return false;
+      }
+      try {
+        window.premiumBtnEnabled = false;
+        await new Promise((resolve, reject) => {
+          (window.jQuery || window.$).getScript(MASS_SCAVENGE_SCRIPT_URL).done(resolve).fail((xhr, status, error) => reject(error || status || xhr));
+        });
+        return true;
+      } catch (error) {
+        console.error("[Mass Recruting] massScavenge.js konnte nicht geladen werden.", error);
+        this.failRun("Raubzug-Tool nicht geladen");
+        return false;
+      }
     }
     scheduleCalculateRuntimesClick() {
       const token = this.runToken;
@@ -522,6 +527,8 @@
     }
     findCalculateRuntimesButton() {
       const root = document.querySelector("#scavenge_mass_screen") || document;
+      const primary = root.querySelector("#sendMass");
+      if (primary && this.isClickableElement(primary)) return primary;
       const candidates = Array.from(root.querySelectorAll([
         "button",
         'input[type="button"]',

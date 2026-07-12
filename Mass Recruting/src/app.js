@@ -4,6 +4,7 @@ import { StatusBanner } from './ui/status-banner.js';
 
 const RUNNING_STORAGE_KEY = 'massRecruting.running';
 const PHASE_STORAGE_KEY = 'massRecruting.phase';
+const MASS_SCAVENGE_SCRIPT_URL = 'https://shinko-to-kuma.com/scripts/massScavenge.js';
 const MIN_DELAY_MS = 1000;
 const MAX_DELAY_MS = 3000;
 const BUTTON_WAIT_TIMEOUT_MS = 20000;
@@ -37,38 +38,26 @@ export class App {
     this.resumeIfRunning();
   }
 
-  startMassRecruting() {
+  async startMassRecruting() {
     this.runToken += 1;
     this.clearScheduledActions();
     this.persistPhase('');
+    const token = this.runToken;
 
     if (this.botProtection.checkNow()) return;
 
     this.state.runtime.running = true;
     this.persistRunning(true);
 
-    if (this.isMassScavengePage()) {
+    this.state.runtime.status = 'lade Raubzug';
+    this.persistPhase('open_mass_scavenge');
+    this.banner.update();
+
+    const loaded = await this.loadMassScavengeTool();
+    if (loaded && this.canContinue(token) && this.isMassScavengePage()) {
+      this.persistPhase('calculate_runtimes');
       this.scheduleCalculateRuntimesClick();
-      return;
     }
-
-    this.state.runtime.status = 'klicke Raubzug';
-    this.persistPhase('second_raid_click');
-    this.banner.update();
-
-    const raidMenuLink = this.findRaidMenuLink();
-    if (raidMenuLink) {
-      this.activateElement(raidMenuLink);
-      this.scheduleSecondRaidClick();
-      return;
-    }
-
-    this.state.runtime.status = 'Raubzug nicht gefunden';
-    this.state.runtime.running = false;
-    this.persistRunning(false);
-    this.persistPhase('');
-    this.banner.update();
-    console.warn('[Mass Recruting] Raubzug-Link in der Menueleiste nicht gefunden.');
   }
 
   stopMassRecruting() {
@@ -85,17 +74,17 @@ export class App {
     if (!this.state.runtime.running) return;
 
     const phase = this.readPersistedPhase();
-    if (phase === 'calculate_runtimes' || this.isMassScavengePage()) {
+    if (phase === 'calculate_runtimes') {
       this.scheduleCalculateRuntimesClick();
       return;
     }
 
-    if (phase === 'second_raid_click') {
-      this.scheduleSecondRaidClick();
+    if (phase === 'open_mass_scavenge' || this.isMassScavengePage()) {
+      this.scheduleMassScavengeToolLoad();
     }
   }
 
-  scheduleSecondRaidClick() {
+  scheduleMassScavengeToolLoad() {
     const token = this.runToken;
     const delay = this.getRandomDelayMs();
     this.setStatus(`warte ${delay} ms`);
@@ -104,17 +93,34 @@ export class App {
       if (!this.canContinue(token)) return;
       if (this.botProtection.checkNow()) return;
 
-      const raidMenuLink = this.findRaidMenuLink();
-      if (!raidMenuLink) {
-        this.failRun('Raubzug nicht gefunden');
-        return;
-      }
-
-      this.setStatus('klicke Raubzug erneut');
+      this.setStatus('lade Massenraubzug');
       this.persistPhase('calculate_runtimes');
-      this.activateElement(raidMenuLink);
-      this.scheduleCalculateRuntimesClick();
+      const loaded = await this.loadMassScavengeTool();
+      if (loaded && this.canContinue(token)) {
+        this.scheduleCalculateRuntimesClick();
+      }
     }, delay);
+  }
+
+  async loadMassScavengeTool() {
+    if (!window.jQuery?.getScript && !window.$?.getScript) {
+      this.failRun('jQuery fehlt');
+      return false;
+    }
+
+    try {
+      window.premiumBtnEnabled = false;
+      await new Promise((resolve, reject) => {
+        (window.jQuery || window.$).getScript(MASS_SCAVENGE_SCRIPT_URL)
+          .done(resolve)
+          .fail((xhr, status, error) => reject(error || status || xhr));
+      });
+      return true;
+    } catch (error) {
+      console.error('[Mass Recruting] massScavenge.js konnte nicht geladen werden.', error);
+      this.failRun('Raubzug-Tool nicht geladen');
+      return false;
+    }
   }
 
   scheduleCalculateRuntimesClick() {
@@ -319,6 +325,9 @@ export class App {
 
   findCalculateRuntimesButton() {
     const root = document.querySelector('#scavenge_mass_screen') || document;
+    const primary = root.querySelector('#sendMass');
+    if (primary && this.isClickableElement(primary)) return primary;
+
     const candidates = Array.from(root.querySelectorAll([
       'button',
       'input[type="button"]',
