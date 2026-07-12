@@ -2,7 +2,9 @@ export function createDefaultState() {
   return {
     runtime: {
       botProtectionTriggered: false,
-      botProtectionLastCheckAt: null
+      botProtectionLastCheckAt: null,
+      running: false,
+      status: 'bereit'
     }
   };
 }

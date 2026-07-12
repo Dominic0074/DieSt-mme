@@ -3,7 +3,7 @@ const STYLE_ID = 'ds-mass-recruting-status-style';
 
 export class StatusBanner {
   /**
-   * @param {{ runtime: { botProtectionTriggered: boolean, botProtectionLastCheckAt: number | null } }} state
+   * @param {{ runtime: { botProtectionTriggered: boolean, botProtectionLastCheckAt: number | null, running: boolean, status: string } }} state
    */
   constructor(state) {
     this.state = state;
@@ -31,6 +31,14 @@ export class StatusBanner {
         <span>Letzter Check</span>
         <strong data-field="lastCheck">-</strong>
       </div>
+      <div class="ds-mr-line">
+        <span>Status</span>
+        <strong data-field="status">-</strong>
+      </div>
+      <div class="ds-mr-actions">
+        <button type="button" data-action="start">Start</button>
+        <button type="button" data-action="stop">Stop</button>
+      </div>
     `;
 
     document.body.appendChild(root);
@@ -45,6 +53,22 @@ export class StatusBanner {
     this.root.classList.toggle('is-stopped', isTriggered);
     this.setField('safety', isTriggered ? 'erkannt' : 'ok');
     this.setField('lastCheck', this.formatLastCheck());
+    this.setField('status', this.state.runtime.status);
+    this.updateButtons();
+  }
+
+  onStart(callback) {
+    this.root?.addEventListener('click', event => {
+      if (!event.target?.matches?.('[data-action="start"]')) return;
+      callback?.();
+    });
+  }
+
+  onStop(callback) {
+    this.root?.addEventListener('click', event => {
+      if (!event.target?.matches?.('[data-action="stop"]')) return;
+      callback?.();
+    });
   }
 
   formatLastCheck() {
@@ -61,6 +85,15 @@ export class StatusBanner {
   setField(name, value) {
     const node = this.root?.querySelector(`[data-field="${name}"]`);
     if (node) node.textContent = String(value);
+  }
+
+  updateButtons() {
+    const startButton = this.root?.querySelector('[data-action="start"]');
+    const stopButton = this.root?.querySelector('[data-action="stop"]');
+    const isTriggered = this.state.runtime.botProtectionTriggered;
+
+    if (startButton) startButton.disabled = isTriggered || this.state.runtime.running;
+    if (stopButton) stopButton.disabled = !this.state.runtime.running;
   }
 
   injectStyle() {
@@ -108,6 +141,24 @@ export class StatusBanner {
         max-width: 128px;
         text-align: right;
         text-overflow: ellipsis;
+      }
+      #${BANNER_ID} .ds-mr-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 5px;
+        margin-top: 8px;
+      }
+      #${BANNER_ID} button {
+        padding: 2px 8px;
+        border: 1px solid #8c6d3f;
+        background: #f5e6bd;
+        color: #2f2417;
+        font: 12px Arial, sans-serif;
+        cursor: pointer;
+      }
+      #${BANNER_ID} button:disabled {
+        cursor: default;
+        opacity: 0.55;
       }
     `;
     document.head.appendChild(style);

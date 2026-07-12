@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.5
+// @version      0.1.8
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -18,7 +18,9 @@
     return {
       runtime: {
         botProtectionTriggered: false,
-        botProtectionLastCheckAt: null
+        botProtectionLastCheckAt: null,
+        running: false,
+        status: "bereit"
       }
     };
   }
@@ -111,7 +113,7 @@
   var STYLE_ID = "ds-mass-recruting-status-style";
   var StatusBanner = class {
     /**
-     * @param {{ runtime: { botProtectionTriggered: boolean, botProtectionLastCheckAt: number | null } }} state
+     * @param {{ runtime: { botProtectionTriggered: boolean, botProtectionLastCheckAt: number | null, running: boolean, status: string } }} state
      */
     constructor(state) {
       this.state = state;
@@ -136,6 +138,14 @@
         <span>Letzter Check</span>
         <strong data-field="lastCheck">-</strong>
       </div>
+      <div class="ds-mr-line">
+        <span>Status</span>
+        <strong data-field="status">-</strong>
+      </div>
+      <div class="ds-mr-actions">
+        <button type="button" data-action="start">Start</button>
+        <button type="button" data-action="stop">Stop</button>
+      </div>
     `;
       document.body.appendChild(root);
       this.root = root;
@@ -147,6 +157,20 @@
       this.root.classList.toggle("is-stopped", isTriggered);
       this.setField("safety", isTriggered ? "erkannt" : "ok");
       this.setField("lastCheck", this.formatLastCheck());
+      this.setField("status", this.state.runtime.status);
+      this.updateButtons();
+    }
+    onStart(callback) {
+      this.root?.addEventListener("click", (event) => {
+        if (!event.target?.matches?.('[data-action="start"]')) return;
+        callback?.();
+      });
+    }
+    onStop(callback) {
+      this.root?.addEventListener("click", (event) => {
+        if (!event.target?.matches?.('[data-action="stop"]')) return;
+        callback?.();
+      });
     }
     formatLastCheck() {
       const timestamp = this.state.runtime.botProtectionLastCheckAt;
@@ -160,6 +184,13 @@
     setField(name, value) {
       const node = this.root?.querySelector(`[data-field="${name}"]`);
       if (node) node.textContent = String(value);
+    }
+    updateButtons() {
+      const startButton = this.root?.querySelector('[data-action="start"]');
+      const stopButton = this.root?.querySelector('[data-action="stop"]');
+      const isTriggered = this.state.runtime.botProtectionTriggered;
+      if (startButton) startButton.disabled = isTriggered || this.state.runtime.running;
+      if (stopButton) stopButton.disabled = !this.state.runtime.running;
     }
     injectStyle() {
       if (document.getElementById(STYLE_ID)) return;
@@ -206,26 +237,113 @@
         text-align: right;
         text-overflow: ellipsis;
       }
+      #${BANNER_ID} .ds-mr-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 5px;
+        margin-top: 8px;
+      }
+      #${BANNER_ID} button {
+        padding: 2px 8px;
+        border: 1px solid #8c6d3f;
+        background: #f5e6bd;
+        color: #2f2417;
+        font: 12px Arial, sans-serif;
+        cursor: pointer;
+      }
+      #${BANNER_ID} button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
     `;
       document.head.appendChild(style);
     }
   };
 
   // Mass Recruting/src/app.js
+  var RUNNING_STORAGE_KEY = "massRecruting.running";
   var App = class {
     constructor() {
       this.state = createDefaultState();
+      this.hydrateRuntime();
       this.banner = new StatusBanner(this.state);
       this.botProtection = new BotProtectionService(this.state, {
         onChecked: () => this.banner.update(),
-        onTriggered: () => this.banner.update()
+        onTriggered: () => {
+          this.state.runtime.running = false;
+          this.state.runtime.status = "Safety erkannt";
+          this.persistRunning(false);
+          this.banner.update();
+        }
       });
       this.bannerIntervalId = null;
     }
     start() {
       this.banner.mount();
+      this.banner.onStart(() => this.startMassRecruting());
+      this.banner.onStop(() => this.stopMassRecruting());
       this.botProtection.start();
       this.startBannerTicker();
+    }
+    startMassRecruting() {
+      if (this.botProtection.checkNow()) return;
+      this.state.runtime.running = true;
+      this.state.runtime.status = "oeffne Raubzug";
+      this.persistRunning(true);
+      this.banner.update();
+      const raidMenuLink = this.findRaidMenuLink();
+      if (raidMenuLink) {
+        raidMenuLink.click();
+        return;
+      }
+      this.state.runtime.status = "Raubzug nicht gefunden";
+      this.state.runtime.running = false;
+      this.persistRunning(false);
+      this.banner.update();
+      console.warn("[Mass Recruting] Raubzug-Link in der Menueleiste nicht gefunden.");
+    }
+    stopMassRecruting() {
+      this.state.runtime.running = false;
+      this.state.runtime.status = "angehalten";
+      this.persistRunning(false);
+      this.banner.update();
+    }
+    hydrateRuntime() {
+      if (this.readPersistedRunning()) {
+        this.state.runtime.running = true;
+        this.state.runtime.status = "aktiv";
+      }
+    }
+    readPersistedRunning() {
+      try {
+        return window.localStorage?.getItem(RUNNING_STORAGE_KEY) === "1";
+      } catch {
+        return false;
+      }
+    }
+    persistRunning(isRunning) {
+      try {
+        window.localStorage?.setItem(RUNNING_STORAGE_KEY, isRunning ? "1" : "0");
+      } catch {
+      }
+    }
+    findRaidMenuLink() {
+      const selectors = [
+        "#manager_icon_farm",
+        'a[href*="screen=am_farm"]',
+        'a[href*="screen=place"][href*="mode=scavenge"]'
+      ];
+      for (const selector of selectors) {
+        const link = document.querySelector(selector);
+        if (link) return link;
+      }
+      return Array.from(document.querySelectorAll("a[href]")).find((link) => {
+        const label = this.normalizeText(`${link.textContent || ""} ${link.title || ""} ${link.getAttribute("href") || ""}`);
+        return label.includes("raubzug") || label.includes("raubzuege") || label.includes("raubzuge") || label.includes("farm assistent") || label.includes("am farm");
+      }) || null;
+    }
+    normalizeText(value) {
+      return String(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, " ").trim();
     }
     startBannerTicker() {
       if (this.bannerIntervalId) return;
