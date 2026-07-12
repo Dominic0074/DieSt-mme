@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.9
+// @version      0.1.11
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -328,9 +328,13 @@
       }
     }
     findRaidMenuLink() {
+      const quickbarRaidLink = Array.from(document.querySelectorAll("a.quickbar_link")).find((link) => {
+        return this.normalizeText(link.textContent || "") === "raubzug";
+      });
+      if (quickbarRaidLink) return quickbarRaidLink;
       const selectors = [
-        "#manager_icon_farm",
         'a[href*="screen=am_farm"]',
+        "#manager_icon_farm",
         'a[href*="screen=place"][href*="mode=scavenge"]'
       ];
       for (const selector of selectors) {

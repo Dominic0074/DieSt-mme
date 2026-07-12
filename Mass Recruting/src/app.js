@@ -81,9 +81,14 @@ export class App {
   }
 
   findRaidMenuLink() {
+    const quickbarRaidLink = Array.from(document.querySelectorAll('a.quickbar_link')).find(link => {
+      return this.normalizeText(link.textContent || '') === 'raubzug';
+    });
+    if (quickbarRaidLink) return quickbarRaidLink;
+
     const selectors = [
-      '#manager_icon_farm',
       'a[href*="screen=am_farm"]',
+      '#manager_icon_farm',
       'a[href*="screen=place"][href*="mode=scavenge"]'
     ];
 
