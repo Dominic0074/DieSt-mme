@@ -98,9 +98,9 @@ export class App {
         return;
       }
 
-      this.setStatus('klicke Raubzug erneut');
-      raidMenuLink.click();
+      this.setStatus('oeffne Massenraubzug');
       this.persistPhase('calculate_runtimes');
+      window.location.href = this.buildMassScavengeUrl();
       this.scheduleCalculateRuntimesClick();
     }, delay);
   }
@@ -244,6 +244,20 @@ export class App {
         || label.includes('calculate runtimes')
         || label.includes('calculate runtime');
     }) || null;
+  }
+
+  buildMassScavengeUrl() {
+    const url = new URL(window.location.href);
+    const villageId = url.searchParams.get('village') || window.game_data?.village?.id || '';
+
+    url.pathname = '/game.php';
+    url.search = '';
+    if (villageId) url.searchParams.set('village', villageId);
+    url.searchParams.set('screen', 'place');
+    url.searchParams.set('mode', 'scavenge_mass');
+    url.hash = '';
+
+    return `${url.toString()}#`;
   }
 
   isMassScavengePage() {

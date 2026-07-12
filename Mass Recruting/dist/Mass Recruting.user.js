@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.13
+// @version      0.1.15
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -343,9 +343,9 @@
           this.failRun("Raubzug nicht gefunden");
           return;
         }
-        this.setStatus("klicke Raubzug erneut");
-        raidMenuLink.click();
+        this.setStatus("oeffne Massenraubzug");
         this.persistPhase("calculate_runtimes");
+        window.location.href = this.buildMassScavengeUrl();
         this.scheduleCalculateRuntimesClick();
       }, delay);
     }
@@ -459,6 +459,17 @@
         const label = this.normalizeText(element.value || element.textContent || element.getAttribute("title") || "");
         return label.includes("calculate runtimes for each page") || label.includes("calculate runtimes") || label.includes("calculate runtime");
       }) || null;
+    }
+    buildMassScavengeUrl() {
+      const url = new URL(window.location.href);
+      const villageId = url.searchParams.get("village") || window.game_data?.village?.id || "";
+      url.pathname = "/game.php";
+      url.search = "";
+      if (villageId) url.searchParams.set("village", villageId);
+      url.searchParams.set("screen", "place");
+      url.searchParams.set("mode", "scavenge_mass");
+      url.hash = "";
+      return `${url.toString()}#`;
     }
     isMassScavengePage() {
       const params = new URLSearchParams(window.location.search);
