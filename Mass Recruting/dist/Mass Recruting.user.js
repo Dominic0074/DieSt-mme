@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.15
+// @version      0.1.19
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -265,6 +265,8 @@
   var PHASE_STORAGE_KEY = "massRecruting.phase";
   var MIN_DELAY_MS = 1e3;
   var MAX_DELAY_MS = 3e3;
+  var BUTTON_WAIT_TIMEOUT_MS = 2e4;
+  var BUTTON_WAIT_INTERVAL_MS = 250;
   var App = class {
     constructor() {
       this.state = createDefaultState();
@@ -294,8 +296,12 @@
     startMassRecruting() {
       if (this.botProtection.checkNow()) return;
       this.state.runtime.running = true;
-      this.state.runtime.status = "klicke Raubzug";
       this.persistRunning(true);
+      if (this.isMassScavengePage()) {
+        this.scheduleCalculateRuntimesClick();
+        return;
+      }
+      this.state.runtime.status = "klicke Raubzug";
       this.persistPhase("second_raid_click");
       this.banner.update();
       const raidMenuLink = this.findRaidMenuLink();
@@ -335,7 +341,7 @@
       const token = this.runToken;
       const delay = this.getRandomDelayMs();
       this.setStatus(`warte ${delay} ms`);
-      this.schedule(() => {
+      this.schedule(async () => {
         if (!this.canContinue(token)) return;
         if (this.botProtection.checkNow()) return;
         const raidMenuLink = this.findRaidMenuLink();
@@ -354,10 +360,11 @@
       const delay = this.getRandomDelayMs();
       this.persistPhase("calculate_runtimes");
       this.setStatus(`warte ${delay} ms`);
-      this.schedule(() => {
+      this.schedule(async () => {
         if (!this.canContinue(token)) return;
         if (this.botProtection.checkNow()) return;
-        const button = this.findCalculateRuntimesButton();
+        this.setStatus("suche Calculate");
+        const button = await this.waitForCalculateRuntimesButton(token);
         if (!button) {
           this.failRun("Calculate nicht gefunden");
           return;
@@ -366,6 +373,20 @@
         button.click();
         this.setStatus("Calculate geklickt");
       }, delay);
+    }
+    async waitForCalculateRuntimesButton(token) {
+      const startedAt = Date.now();
+      while (this.canContinue(token) && Date.now() - startedAt < BUTTON_WAIT_TIMEOUT_MS) {
+        const button = this.findCalculateRuntimesButton();
+        if (button) return button;
+        await this.delay(BUTTON_WAIT_INTERVAL_MS);
+      }
+      return null;
+    }
+    delay(ms) {
+      return new Promise((resolve) => {
+        this.schedule(resolve, ms);
+      });
     }
     schedule(callback, delay) {
       const timeoutId = window.setTimeout(() => {

@@ -6,6 +6,8 @@ const RUNNING_STORAGE_KEY = 'massRecruting.running';
 const PHASE_STORAGE_KEY = 'massRecruting.phase';
 const MIN_DELAY_MS = 1000;
 const MAX_DELAY_MS = 3000;
+const BUTTON_WAIT_TIMEOUT_MS = 20000;
+const BUTTON_WAIT_INTERVAL_MS = 250;
 
 export class App {
   constructor() {
@@ -39,8 +41,14 @@ export class App {
     if (this.botProtection.checkNow()) return;
 
     this.state.runtime.running = true;
-    this.state.runtime.status = 'klicke Raubzug';
     this.persistRunning(true);
+
+    if (this.isMassScavengePage()) {
+      this.scheduleCalculateRuntimesClick();
+      return;
+    }
+
+    this.state.runtime.status = 'klicke Raubzug';
     this.persistPhase('second_raid_click');
     this.banner.update();
 
@@ -88,7 +96,7 @@ export class App {
     const delay = this.getRandomDelayMs();
     this.setStatus(`warte ${delay} ms`);
 
-    this.schedule(() => {
+    this.schedule(async () => {
       if (!this.canContinue(token)) return;
       if (this.botProtection.checkNow()) return;
 
@@ -111,11 +119,12 @@ export class App {
     this.persistPhase('calculate_runtimes');
     this.setStatus(`warte ${delay} ms`);
 
-    this.schedule(() => {
+    this.schedule(async () => {
       if (!this.canContinue(token)) return;
       if (this.botProtection.checkNow()) return;
 
-      const button = this.findCalculateRuntimesButton();
+      this.setStatus('suche Calculate');
+      const button = await this.waitForCalculateRuntimesButton(token);
       if (!button) {
         this.failRun('Calculate nicht gefunden');
         return;
@@ -125,6 +134,25 @@ export class App {
       button.click();
       this.setStatus('Calculate geklickt');
     }, delay);
+  }
+
+  async waitForCalculateRuntimesButton(token) {
+    const startedAt = Date.now();
+
+    while (this.canContinue(token) && Date.now() - startedAt < BUTTON_WAIT_TIMEOUT_MS) {
+      const button = this.findCalculateRuntimesButton();
+      if (button) return button;
+
+      await this.delay(BUTTON_WAIT_INTERVAL_MS);
+    }
+
+    return null;
+  }
+
+  delay(ms) {
+    return new Promise(resolve => {
+      this.schedule(resolve, ms);
+    });
   }
 
   schedule(callback, delay) {
