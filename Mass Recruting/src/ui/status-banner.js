@@ -24,8 +24,8 @@ export class StatusBanner {
     root.innerHTML = `
       <div class="ds-mr-title">Mass Recruting</div>
       <div class="ds-mr-line">
-        <span>Botschutz</span>
-        <strong data-field="botProtection">-</strong>
+        <span>Safety</span>
+        <strong data-field="safety">-</strong>
       </div>
       <div class="ds-mr-line">
         <span>Letzter Check</span>
@@ -43,7 +43,7 @@ export class StatusBanner {
 
     const isTriggered = this.state.runtime.botProtectionTriggered;
     this.root.classList.toggle('is-stopped', isTriggered);
-    this.setField('botProtection', isTriggered ? 'erkannt' : 'ok');
+    this.setField('safety', isTriggered ? 'erkannt' : 'ok');
     this.setField('lastCheck', this.formatLastCheck());
   }
 

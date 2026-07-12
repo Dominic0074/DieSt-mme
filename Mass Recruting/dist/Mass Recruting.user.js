@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.1
-// @description  Mass Recruting fuer Die Staemme mit Botschutz und Status-Banner.
+// @version      0.1.4
+// @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
@@ -67,7 +67,9 @@
         const style = window.getComputedStyle(botProtection);
         if (style.display !== "none" && style.visibility !== "hidden") return true;
       }
-      const bodyText = document.body?.innerText || "";
+      const bodyClone = document.body?.cloneNode(true);
+      bodyClone?.querySelector("#ds-mass-recruting-status-banner")?.remove();
+      const bodyText = bodyClone?.innerText || "";
       return /du bist ein bot|bot.{0,30}schutz|captcha|bitte best.{0,5}tige|are you human/i.test(bodyText);
     }
     triggerStop() {
@@ -127,8 +129,8 @@
       root.innerHTML = `
       <div class="ds-mr-title">Mass Recruting</div>
       <div class="ds-mr-line">
-        <span>Botschutz</span>
-        <strong data-field="botProtection">-</strong>
+        <span>Safety</span>
+        <strong data-field="safety">-</strong>
       </div>
       <div class="ds-mr-line">
         <span>Letzter Check</span>
@@ -143,7 +145,7 @@
       if (!this.root) return;
       const isTriggered = this.state.runtime.botProtectionTriggered;
       this.root.classList.toggle("is-stopped", isTriggered);
-      this.setField("botProtection", isTriggered ? "erkannt" : "ok");
+      this.setField("safety", isTriggered ? "erkannt" : "ok");
       this.setField("lastCheck", this.formatLastCheck());
     }
     formatLastCheck() {

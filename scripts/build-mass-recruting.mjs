@@ -43,7 +43,7 @@ function buildUserscriptHeader(version) {
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
 // @version      ${version}
-// @description  Mass Recruting fuer Die Staemme mit Botschutz und Status-Banner.
+// @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*

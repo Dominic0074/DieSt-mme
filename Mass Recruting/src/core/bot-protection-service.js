@@ -52,7 +52,10 @@ export class BotProtectionService {
       if (style.display !== 'none' && style.visibility !== 'hidden') return true;
     }
 
-    const bodyText = document.body?.innerText || '';
+    const bodyClone = document.body?.cloneNode(true);
+    bodyClone?.querySelector('#ds-mass-recruting-status-banner')?.remove();
+
+    const bodyText = bodyClone?.innerText || '';
     return /du bist ein bot|bot.{0,30}schutz|captcha|bitte best.{0,5}tige|are you human/i.test(bodyText);
   }
 
