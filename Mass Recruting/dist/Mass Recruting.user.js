@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.20
+// @version      0.1.21
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -306,7 +306,7 @@
       this.banner.update();
       const raidMenuLink = this.findRaidMenuLink();
       if (raidMenuLink) {
-        raidMenuLink.click();
+        this.clickElement(raidMenuLink);
         this.scheduleSecondRaidClick();
         return;
       }
@@ -349,9 +349,9 @@
           this.failRun("Raubzug nicht gefunden");
           return;
         }
-        this.setStatus("oeffne Massenraubzug");
+        this.setStatus("klicke Raubzug erneut");
         this.persistPhase("calculate_runtimes");
-        window.location.href = this.buildMassScavengeUrl();
+        this.clickElement(raidMenuLink);
         this.scheduleCalculateRuntimesClick();
       }, delay);
     }
@@ -370,18 +370,39 @@
           return;
         }
         this.setStatus("klicke Calculate");
-        button.click();
+        this.clickElement(button);
         this.setStatus("Calculate geklickt");
       }, delay);
     }
     async waitForCalculateRuntimesButton(token) {
-      const startedAt = Date.now();
-      while (this.canContinue(token) && Date.now() - startedAt < BUTTON_WAIT_TIMEOUT_MS) {
-        const button = this.findCalculateRuntimesButton();
-        if (button) return button;
-        await this.delay(BUTTON_WAIT_INTERVAL_MS);
-      }
-      return null;
+      return new Promise((resolve) => {
+        const startedAt = Date.now();
+        let observer = null;
+        let intervalId = null;
+        const finish = (button) => {
+          if (observer) observer.disconnect();
+          if (intervalId) window.clearInterval(intervalId);
+          resolve(button);
+        };
+        const check = () => {
+          if (!this.canContinue(token)) {
+            finish(null);
+            return;
+          }
+          const button = this.findCalculateRuntimesButton();
+          if (button) {
+            finish(button);
+            return;
+          }
+          if (Date.now() - startedAt >= BUTTON_WAIT_TIMEOUT_MS) {
+            finish(null);
+          }
+        };
+        observer = new MutationObserver(check);
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        intervalId = window.setInterval(check, BUTTON_WAIT_INTERVAL_MS);
+        check();
+      });
     }
     delay(ms) {
       return new Promise((resolve) => {
@@ -420,7 +441,7 @@
       return Math.floor(MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS + 1));
     }
     hydrateRuntime() {
-      if (this.readPersistedRunning()) {
+      if (this.readPersistedRunning() || this.readPersistedPhase()) {
         this.state.runtime.running = true;
         this.state.runtime.status = "aktiv";
       }
@@ -456,6 +477,8 @@
       }
     }
     findRaidMenuLink() {
+      const massScavengeScriptLink = document.querySelector('a[href*="massScavenge.js"]');
+      if (massScavengeScriptLink) return massScavengeScriptLink;
       const quickbarRaidLink = Array.from(document.querySelectorAll("a.quickbar_link")).find((link) => {
         return this.normalizeText(link.textContent || "") === "raubzug";
       });
@@ -475,22 +498,45 @@
       }) || null;
     }
     findCalculateRuntimesButton() {
-      const candidates = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn, a'));
+      const root = document.querySelector("#scavenge_mass_screen") || document;
+      const candidates = Array.from(root.querySelectorAll([
+        "button",
+        'input[type="button"]',
+        'input[type="submit"]',
+        "a",
+        '[role="button"]',
+        ".btn"
+      ].join(",")));
       return candidates.find((element) => {
-        const label = this.normalizeText(element.value || element.textContent || element.getAttribute("title") || "");
+        if (!this.isClickableElement(element)) return false;
+        const label = this.normalizeText([
+          element.value,
+          element.textContent,
+          element.getAttribute("title"),
+          element.getAttribute("aria-label"),
+          element.getAttribute("data-title")
+        ].filter(Boolean).join(" "));
         return label.includes("calculate runtimes for each page") || label.includes("calculate runtimes") || label.includes("calculate runtime");
       }) || null;
     }
-    buildMassScavengeUrl() {
-      const url = new URL(window.location.href);
-      const villageId = url.searchParams.get("village") || window.game_data?.village?.id || "";
-      url.pathname = "/game.php";
-      url.search = "";
-      if (villageId) url.searchParams.set("village", villageId);
-      url.searchParams.set("screen", "place");
-      url.searchParams.set("mode", "scavenge_mass");
-      url.hash = "";
-      return `${url.toString()}#`;
+    clickElement(element) {
+      element.scrollIntoView?.({ block: "center", inline: "center" });
+      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+        element.dispatchEvent(new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        }));
+      }
+      element.click?.();
+    }
+    isClickableElement(element) {
+      if (element.disabled) return false;
+      if (element.getAttribute("aria-disabled") === "true") return false;
+      const style = window.getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
     }
     isMassScavengePage() {
       const params = new URLSearchParams(window.location.search);
