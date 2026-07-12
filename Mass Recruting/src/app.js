@@ -3,6 +3,9 @@ import { BotProtectionService } from './core/bot-protection-service.js';
 import { StatusBanner } from './ui/status-banner.js';
 
 const RUNNING_STORAGE_KEY = 'massRecruting.running';
+const PHASE_STORAGE_KEY = 'massRecruting.phase';
+const MIN_DELAY_MS = 1000;
+const MAX_DELAY_MS = 3000;
 
 export class App {
   constructor() {
@@ -19,6 +22,8 @@ export class App {
       }
     });
     this.bannerIntervalId = null;
+    this.timeoutIds = new Set();
+    this.runToken = 0;
   }
 
   start() {
@@ -27,34 +32,138 @@ export class App {
     this.banner.onStop(() => this.stopMassRecruting());
     this.botProtection.start();
     this.startBannerTicker();
+    this.resumeIfRunning();
   }
 
   startMassRecruting() {
     if (this.botProtection.checkNow()) return;
 
     this.state.runtime.running = true;
-    this.state.runtime.status = 'oeffne Raubzug';
+    this.state.runtime.status = 'klicke Raubzug';
     this.persistRunning(true);
+    this.persistPhase('second_raid_click');
     this.banner.update();
 
     const raidMenuLink = this.findRaidMenuLink();
     if (raidMenuLink) {
       raidMenuLink.click();
+      this.scheduleSecondRaidClick();
       return;
     }
 
     this.state.runtime.status = 'Raubzug nicht gefunden';
     this.state.runtime.running = false;
     this.persistRunning(false);
+    this.persistPhase('');
     this.banner.update();
     console.warn('[Mass Recruting] Raubzug-Link in der Menueleiste nicht gefunden.');
   }
 
   stopMassRecruting() {
+    this.runToken += 1;
+    this.clearScheduledActions();
     this.state.runtime.running = false;
     this.state.runtime.status = 'angehalten';
     this.persistRunning(false);
+    this.persistPhase('');
     this.banner.update();
+  }
+
+  resumeIfRunning() {
+    if (!this.state.runtime.running) return;
+
+    const phase = this.readPersistedPhase();
+    if (phase === 'calculate_runtimes' || this.isMassScavengePage()) {
+      this.scheduleCalculateRuntimesClick();
+      return;
+    }
+
+    if (phase === 'second_raid_click') {
+      this.scheduleSecondRaidClick();
+    }
+  }
+
+  scheduleSecondRaidClick() {
+    const token = this.runToken;
+    const delay = this.getRandomDelayMs();
+    this.setStatus(`warte ${delay} ms`);
+
+    this.schedule(() => {
+      if (!this.canContinue(token)) return;
+      if (this.botProtection.checkNow()) return;
+
+      const raidMenuLink = this.findRaidMenuLink();
+      if (!raidMenuLink) {
+        this.failRun('Raubzug nicht gefunden');
+        return;
+      }
+
+      this.setStatus('klicke Raubzug erneut');
+      raidMenuLink.click();
+      this.persistPhase('calculate_runtimes');
+      this.scheduleCalculateRuntimesClick();
+    }, delay);
+  }
+
+  scheduleCalculateRuntimesClick() {
+    const token = this.runToken;
+    const delay = this.getRandomDelayMs();
+    this.persistPhase('calculate_runtimes');
+    this.setStatus(`warte ${delay} ms`);
+
+    this.schedule(() => {
+      if (!this.canContinue(token)) return;
+      if (this.botProtection.checkNow()) return;
+
+      const button = this.findCalculateRuntimesButton();
+      if (!button) {
+        this.failRun('Calculate nicht gefunden');
+        return;
+      }
+
+      this.setStatus('klicke Calculate');
+      button.click();
+      this.setStatus('Calculate geklickt');
+    }, delay);
+  }
+
+  schedule(callback, delay) {
+    const timeoutId = window.setTimeout(() => {
+      this.timeoutIds.delete(timeoutId);
+      callback();
+    }, delay);
+    this.timeoutIds.add(timeoutId);
+  }
+
+  clearScheduledActions() {
+    for (const timeoutId of this.timeoutIds) {
+      window.clearTimeout(timeoutId);
+    }
+    this.timeoutIds.clear();
+  }
+
+  canContinue(token) {
+    return token === this.runToken
+      && this.state.runtime.running
+      && !this.state.runtime.botProtectionTriggered;
+  }
+
+  failRun(status) {
+    this.state.runtime.running = false;
+    this.state.runtime.status = status;
+    this.persistRunning(false);
+    this.persistPhase('');
+    this.banner.update();
+    console.warn(`[Mass Recruting] ${status}.`);
+  }
+
+  setStatus(status) {
+    this.state.runtime.status = status;
+    this.banner.update();
+  }
+
+  getRandomDelayMs() {
+    return Math.floor(MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS + 1));
   }
 
   hydrateRuntime() {
@@ -75,6 +184,26 @@ export class App {
   persistRunning(isRunning) {
     try {
       window.localStorage?.setItem(RUNNING_STORAGE_KEY, isRunning ? '1' : '0');
+    } catch {
+      // Ignored: the in-memory state still controls the current page.
+    }
+  }
+
+  readPersistedPhase() {
+    try {
+      return window.localStorage?.getItem(PHASE_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  persistPhase(phase) {
+    try {
+      if (phase) {
+        window.localStorage?.setItem(PHASE_STORAGE_KEY, phase);
+      } else {
+        window.localStorage?.removeItem(PHASE_STORAGE_KEY);
+      }
     } catch {
       // Ignored: the in-memory state still controls the current page.
     }
@@ -105,6 +234,21 @@ export class App {
         || label.includes('farm assistent')
         || label.includes('am farm');
     }) || null;
+  }
+
+  findCalculateRuntimesButton() {
+    const candidates = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn, a'));
+    return candidates.find(element => {
+      const label = this.normalizeText(element.value || element.textContent || element.getAttribute('title') || '');
+      return label.includes('calculate runtimes for each page')
+        || label.includes('calculate runtimes')
+        || label.includes('calculate runtime');
+    }) || null;
+  }
+
+  isMassScavengePage() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('screen') === 'place' && params.get('mode') === 'scavenge_mass';
   }
 
   normalizeText(value) {
