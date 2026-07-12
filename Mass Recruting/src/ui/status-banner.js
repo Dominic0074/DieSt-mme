@@ -92,8 +92,8 @@ export class StatusBanner {
     const stopButton = this.root?.querySelector('[data-action="stop"]');
     const isTriggered = this.state.runtime.botProtectionTriggered;
 
-    if (startButton) startButton.disabled = isTriggered || this.state.runtime.running;
-    if (stopButton) stopButton.disabled = !this.state.runtime.running;
+    if (startButton) startButton.disabled = isTriggered;
+    if (stopButton) stopButton.disabled = isTriggered;
   }
 
   injectStyle() {

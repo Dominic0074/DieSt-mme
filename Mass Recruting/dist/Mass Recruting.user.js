@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.21
+// @version      0.1.22
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -189,8 +189,8 @@
       const startButton = this.root?.querySelector('[data-action="start"]');
       const stopButton = this.root?.querySelector('[data-action="stop"]');
       const isTriggered = this.state.runtime.botProtectionTriggered;
-      if (startButton) startButton.disabled = isTriggered || this.state.runtime.running;
-      if (stopButton) stopButton.disabled = !this.state.runtime.running;
+      if (startButton) startButton.disabled = isTriggered;
+      if (stopButton) stopButton.disabled = isTriggered;
     }
     injectStyle() {
       if (document.getElementById(STYLE_ID)) return;
@@ -294,6 +294,9 @@
       this.resumeIfRunning();
     }
     startMassRecruting() {
+      this.runToken += 1;
+      this.clearScheduledActions();
+      this.persistPhase("");
       if (this.botProtection.checkNow()) return;
       this.state.runtime.running = true;
       this.persistRunning(true);
@@ -306,7 +309,7 @@
       this.banner.update();
       const raidMenuLink = this.findRaidMenuLink();
       if (raidMenuLink) {
-        this.clickElement(raidMenuLink);
+        this.activateElement(raidMenuLink);
         this.scheduleSecondRaidClick();
         return;
       }
@@ -351,7 +354,7 @@
         }
         this.setStatus("klicke Raubzug erneut");
         this.persistPhase("calculate_runtimes");
-        this.clickElement(raidMenuLink);
+        this.activateElement(raidMenuLink);
         this.scheduleCalculateRuntimesClick();
       }, delay);
     }
@@ -370,7 +373,7 @@
           return;
         }
         this.setStatus("klicke Calculate");
-        this.clickElement(button);
+        this.activateElement(button);
         this.setStatus("Calculate geklickt");
       }, delay);
     }
@@ -477,7 +480,10 @@
       }
     }
     findRaidMenuLink() {
-      const massScavengeScriptLink = document.querySelector('a[href*="massScavenge.js"]');
+      const massScavengeScriptLink = Array.from(document.querySelectorAll("a[href]")).find((link) => {
+        const href = link.getAttribute("href") || "";
+        return href.includes("massScavenge.js") || href.includes("shinko-to-kuma.com/scripts/massScavenge");
+      });
       if (massScavengeScriptLink) return massScavengeScriptLink;
       const quickbarRaidLink = Array.from(document.querySelectorAll("a.quickbar_link")).find((link) => {
         return this.normalizeText(link.textContent || "") === "raubzug";
@@ -496,6 +502,23 @@
         const label = this.normalizeText(`${link.textContent || ""} ${link.title || ""} ${link.getAttribute("href") || ""}`);
         return label.includes("raubzug") || label.includes("raubzuege") || label.includes("raubzuge") || label.includes("farm assistent") || label.includes("am farm");
       }) || null;
+    }
+    activateElement(element) {
+      const href = element.getAttribute?.("href") || "";
+      if (href.trim().toLowerCase().startsWith("javascript:")) {
+        this.runJavascriptHref(href);
+        return;
+      }
+      this.clickElement(element);
+    }
+    runJavascriptHref(href) {
+      const code = href.replace(/^javascript:\s*/i, "");
+      try {
+        Function(code).call(window);
+      } catch (error) {
+        console.error("[Mass Recruting] javascript-Link konnte nicht ausgefuehrt werden.", error);
+        this.failRun("Raubzug-Start fehlgeschlagen");
+      }
     }
     findCalculateRuntimesButton() {
       const root = document.querySelector("#scavenge_mass_screen") || document;

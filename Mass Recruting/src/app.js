@@ -38,6 +38,10 @@ export class App {
   }
 
   startMassRecruting() {
+    this.runToken += 1;
+    this.clearScheduledActions();
+    this.persistPhase('');
+
     if (this.botProtection.checkNow()) return;
 
     this.state.runtime.running = true;
@@ -54,7 +58,7 @@ export class App {
 
     const raidMenuLink = this.findRaidMenuLink();
     if (raidMenuLink) {
-      this.clickElement(raidMenuLink);
+      this.activateElement(raidMenuLink);
       this.scheduleSecondRaidClick();
       return;
     }
@@ -108,7 +112,7 @@ export class App {
 
       this.setStatus('klicke Raubzug erneut');
       this.persistPhase('calculate_runtimes');
-      this.clickElement(raidMenuLink);
+      this.activateElement(raidMenuLink);
       this.scheduleCalculateRuntimesClick();
     }, delay);
   }
@@ -131,7 +135,7 @@ export class App {
       }
 
       this.setStatus('klicke Calculate');
-      this.clickElement(button);
+      this.activateElement(button);
       this.setStatus('Calculate geklickt');
     }, delay);
   }
@@ -261,7 +265,10 @@ export class App {
   }
 
   findRaidMenuLink() {
-    const massScavengeScriptLink = document.querySelector('a[href*="massScavenge.js"]');
+    const massScavengeScriptLink = Array.from(document.querySelectorAll('a[href]')).find(link => {
+      const href = link.getAttribute('href') || '';
+      return href.includes('massScavenge.js') || href.includes('shinko-to-kuma.com/scripts/massScavenge');
+    });
     if (massScavengeScriptLink) return massScavengeScriptLink;
 
     const quickbarRaidLink = Array.from(document.querySelectorAll('a.quickbar_link')).find(link => {
@@ -288,6 +295,26 @@ export class App {
         || label.includes('farm assistent')
         || label.includes('am farm');
     }) || null;
+  }
+
+  activateElement(element) {
+    const href = element.getAttribute?.('href') || '';
+    if (href.trim().toLowerCase().startsWith('javascript:')) {
+      this.runJavascriptHref(href);
+      return;
+    }
+
+    this.clickElement(element);
+  }
+
+  runJavascriptHref(href) {
+    const code = href.replace(/^javascript:\s*/i, '');
+    try {
+      Function(code).call(window);
+    } catch (error) {
+      console.error('[Mass Recruting] javascript-Link konnte nicht ausgefuehrt werden.', error);
+      this.failRun('Raubzug-Start fehlgeschlagen');
+    }
   }
 
   findCalculateRuntimesButton() {
