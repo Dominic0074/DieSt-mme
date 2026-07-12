@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.23
+// @version      0.1.24
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
