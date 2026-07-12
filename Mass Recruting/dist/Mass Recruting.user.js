@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.24
+// @version      0.1.25
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -263,6 +263,7 @@
   // Mass Recruting/src/app.js
   var RUNNING_STORAGE_KEY = "massRecruting.running";
   var PHASE_STORAGE_KEY = "massRecruting.phase";
+  var STOPPED_STORAGE_KEY = "massRecruting.stopped";
   var MASS_SCAVENGE_SCRIPT_URL = "https://shinko-to-kuma.com/scripts/massScavenge.js";
   var MIN_DELAY_MS = 1e3;
   var MAX_DELAY_MS = 3e3;
@@ -297,6 +298,7 @@
     async startMassRecruting() {
       this.runToken += 1;
       this.clearScheduledActions();
+      this.persistStopped(false);
       this.persistPhase("");
       const token = this.runToken;
       if (this.botProtection.checkNow()) return;
@@ -318,9 +320,11 @@
       this.state.runtime.status = "angehalten";
       this.persistRunning(false);
       this.persistPhase("");
+      this.persistStopped(true);
       this.banner.update();
     }
     resumeIfRunning() {
+      if (this.readPersistedStopped()) return;
       if (!this.state.runtime.running) return;
       const phase = this.readPersistedPhase();
       if (phase === "calculate_runtimes") {
@@ -356,6 +360,7 @@
         await new Promise((resolve, reject) => {
           (window.jQuery || window.$).getScript(MASS_SCAVENGE_SCRIPT_URL).done(resolve).fail((xhr, status, error) => reject(error || status || xhr));
         });
+        if (this.readPersistedStopped()) return false;
         return true;
       } catch (error) {
         console.error("[Mass Recruting] massScavenge.js konnte nicht geladen werden.", error);
@@ -380,6 +385,10 @@
         this.setStatus("klicke Calculate");
         this.activateElement(button);
         this.setStatus("Calculate geklickt");
+        this.state.runtime.running = false;
+        this.persistRunning(false);
+        this.persistPhase("");
+        this.banner.update();
       }, delay);
     }
     async waitForCalculateRuntimesButton(token) {
@@ -431,7 +440,7 @@
       this.timeoutIds.clear();
     }
     canContinue(token) {
-      return token === this.runToken && this.state.runtime.running && !this.state.runtime.botProtectionTriggered;
+      return token === this.runToken && this.state.runtime.running && !this.state.runtime.botProtectionTriggered && !this.readPersistedStopped();
     }
     failRun(status) {
       this.state.runtime.running = false;
@@ -449,6 +458,11 @@
       return Math.floor(MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS + 1));
     }
     hydrateRuntime() {
+      if (this.readPersistedStopped()) {
+        this.state.runtime.running = false;
+        this.state.runtime.status = "angehalten";
+        return;
+      }
       if (this.readPersistedRunning() || this.readPersistedPhase()) {
         this.state.runtime.running = true;
         this.state.runtime.status = "aktiv";
@@ -480,6 +494,23 @@
           window.localStorage?.setItem(PHASE_STORAGE_KEY, phase);
         } else {
           window.localStorage?.removeItem(PHASE_STORAGE_KEY);
+        }
+      } catch {
+      }
+    }
+    readPersistedStopped() {
+      try {
+        return window.localStorage?.getItem(STOPPED_STORAGE_KEY) === "1";
+      } catch {
+        return false;
+      }
+    }
+    persistStopped(isStopped) {
+      try {
+        if (isStopped) {
+          window.localStorage?.setItem(STOPPED_STORAGE_KEY, "1");
+        } else {
+          window.localStorage?.removeItem(STOPPED_STORAGE_KEY);
         }
       } catch {
       }
@@ -526,9 +557,14 @@
       }
     }
     findCalculateRuntimesButton() {
+      const primary = Array.from(document.querySelectorAll("#sendMass")).find((element) => {
+        const onclick = element.getAttribute("onclick") || "";
+        return onclick.includes("readyToSend") && this.isClickableElement(element);
+      });
+      if (primary) return primary;
       const root = document.querySelector("#scavenge_mass_screen") || document;
-      const primary = root.querySelector("#sendMass");
-      if (primary && this.isClickableElement(primary)) return primary;
+      const fallbackPrimary = root.querySelector("#sendMass");
+      if (fallbackPrimary && this.isClickableElement(fallbackPrimary)) return fallbackPrimary;
       const candidates = Array.from(root.querySelectorAll([
         "button",
         'input[type="button"]',

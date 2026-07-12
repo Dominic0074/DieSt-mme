@@ -4,6 +4,7 @@ import { StatusBanner } from './ui/status-banner.js';
 
 const RUNNING_STORAGE_KEY = 'massRecruting.running';
 const PHASE_STORAGE_KEY = 'massRecruting.phase';
+const STOPPED_STORAGE_KEY = 'massRecruting.stopped';
 const MASS_SCAVENGE_SCRIPT_URL = 'https://shinko-to-kuma.com/scripts/massScavenge.js';
 const MIN_DELAY_MS = 1000;
 const MAX_DELAY_MS = 3000;
@@ -41,6 +42,7 @@ export class App {
   async startMassRecruting() {
     this.runToken += 1;
     this.clearScheduledActions();
+    this.persistStopped(false);
     this.persistPhase('');
     const token = this.runToken;
 
@@ -67,10 +69,12 @@ export class App {
     this.state.runtime.status = 'angehalten';
     this.persistRunning(false);
     this.persistPhase('');
+    this.persistStopped(true);
     this.banner.update();
   }
 
   resumeIfRunning() {
+    if (this.readPersistedStopped()) return;
     if (!this.state.runtime.running) return;
 
     const phase = this.readPersistedPhase();
@@ -115,6 +119,7 @@ export class App {
           .done(resolve)
           .fail((xhr, status, error) => reject(error || status || xhr));
       });
+      if (this.readPersistedStopped()) return false;
       return true;
     } catch (error) {
       console.error('[Mass Recruting] massScavenge.js konnte nicht geladen werden.', error);
@@ -143,6 +148,10 @@ export class App {
       this.setStatus('klicke Calculate');
       this.activateElement(button);
       this.setStatus('Calculate geklickt');
+      this.state.runtime.running = false;
+      this.persistRunning(false);
+      this.persistPhase('');
+      this.banner.update();
     }, delay);
   }
 
@@ -206,7 +215,8 @@ export class App {
   canContinue(token) {
     return token === this.runToken
       && this.state.runtime.running
-      && !this.state.runtime.botProtectionTriggered;
+      && !this.state.runtime.botProtectionTriggered
+      && !this.readPersistedStopped();
   }
 
   failRun(status) {
@@ -228,6 +238,12 @@ export class App {
   }
 
   hydrateRuntime() {
+    if (this.readPersistedStopped()) {
+      this.state.runtime.running = false;
+      this.state.runtime.status = 'angehalten';
+      return;
+    }
+
     if (this.readPersistedRunning() || this.readPersistedPhase()) {
       this.state.runtime.running = true;
       this.state.runtime.status = 'aktiv';
@@ -264,6 +280,26 @@ export class App {
         window.localStorage?.setItem(PHASE_STORAGE_KEY, phase);
       } else {
         window.localStorage?.removeItem(PHASE_STORAGE_KEY);
+      }
+    } catch {
+      // Ignored: the in-memory state still controls the current page.
+    }
+  }
+
+  readPersistedStopped() {
+    try {
+      return window.localStorage?.getItem(STOPPED_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  persistStopped(isStopped) {
+    try {
+      if (isStopped) {
+        window.localStorage?.setItem(STOPPED_STORAGE_KEY, '1');
+      } else {
+        window.localStorage?.removeItem(STOPPED_STORAGE_KEY);
       }
     } catch {
       // Ignored: the in-memory state still controls the current page.
@@ -324,9 +360,15 @@ export class App {
   }
 
   findCalculateRuntimesButton() {
+    const primary = Array.from(document.querySelectorAll('#sendMass')).find(element => {
+      const onclick = element.getAttribute('onclick') || '';
+      return onclick.includes('readyToSend') && this.isClickableElement(element);
+    });
+    if (primary) return primary;
+
     const root = document.querySelector('#scavenge_mass_screen') || document;
-    const primary = root.querySelector('#sendMass');
-    if (primary && this.isClickableElement(primary)) return primary;
+    const fallbackPrimary = root.querySelector('#sendMass');
+    if (fallbackPrimary && this.isClickableElement(fallbackPrimary)) return fallbackPrimary;
 
     const candidates = Array.from(root.querySelectorAll([
       'button',
