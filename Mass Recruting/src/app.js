@@ -83,6 +83,11 @@ export class App {
       return;
     }
 
+    if (phase === 'launch_group') {
+      this.scheduleLaunchGroupClick(this.runToken);
+      return;
+    }
+
     if (phase === 'open_mass_scavenge' || this.isMassScavengePage()) {
       this.scheduleMassScavengeToolLoad();
     }
@@ -148,6 +153,29 @@ export class App {
       this.setStatus('klicke Calculate');
       this.activateElement(button);
       this.setStatus('Calculate geklickt');
+      this.scheduleLaunchGroupClick(token);
+    }, delay);
+  }
+
+  scheduleLaunchGroupClick(token) {
+    const delay = this.getRandomDelayMs();
+    this.persistPhase('launch_group');
+    this.setStatus(`warte ${delay} ms`);
+
+    this.schedule(async () => {
+      if (!this.canContinue(token)) return;
+      if (this.botProtection.checkNow()) return;
+
+      this.setStatus('suche Launch');
+      const button = await this.waitForLaunchGroupButton(token);
+      if (!button) {
+        this.failRun('Launch nicht gefunden');
+        return;
+      }
+
+      this.setStatus('klicke Launch');
+      this.activateElement(button);
+      this.setStatus('Launch geklickt');
       this.state.runtime.running = false;
       this.persistRunning(false);
       this.persistPhase('');
@@ -156,6 +184,14 @@ export class App {
   }
 
   async waitForCalculateRuntimesButton(token) {
+    return this.waitForButton(token, () => this.findCalculateRuntimesButton());
+  }
+
+  async waitForLaunchGroupButton(token) {
+    return this.waitForButton(token, () => this.findLaunchGroupButton());
+  }
+
+  async waitForButton(token, finder) {
     return new Promise(resolve => {
       const startedAt = Date.now();
       let observer = null;
@@ -173,7 +209,7 @@ export class App {
           return;
         }
 
-        const button = this.findCalculateRuntimesButton();
+        const button = finder();
         if (button) {
           finish(button);
           return;
@@ -394,6 +430,33 @@ export class App {
         || label.includes('calculate runtimes')
         || label.includes('calculate runtime');
     }) || null;
+  }
+
+  findLaunchGroupButton() {
+    const primary = Array.from(document.querySelectorAll('#sendMass')).find(element => {
+      const onclick = element.getAttribute('onclick') || '';
+      const label = this.normalizeText(element.value || element.textContent || '');
+      return onclick.includes('sendGroup(0')
+        && label.includes('launch group 1')
+        && this.isClickableElement(element);
+    });
+    if (primary) return primary;
+
+    return Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a, [role="button"], .btn'))
+      .find(element => {
+        if (!this.isClickableElement(element)) return false;
+
+        const onclick = element.getAttribute('onclick') || '';
+        const label = this.normalizeText([
+          element.value,
+          element.textContent,
+          element.getAttribute('title'),
+          element.getAttribute('aria-label')
+        ].filter(Boolean).join(' '));
+
+        return onclick.includes('sendGroup(0')
+          || label.includes('launch group 1');
+      }) || null;
   }
 
   clickElement(element) {

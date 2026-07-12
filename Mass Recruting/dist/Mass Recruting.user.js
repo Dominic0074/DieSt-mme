@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mass Recruting
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.25
+// @version      0.1.26
 // @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -331,6 +331,10 @@
         this.scheduleCalculateRuntimesClick();
         return;
       }
+      if (phase === "launch_group") {
+        this.scheduleLaunchGroupClick(this.runToken);
+        return;
+      }
       if (phase === "open_mass_scavenge" || this.isMassScavengePage()) {
         this.scheduleMassScavengeToolLoad();
       }
@@ -385,6 +389,25 @@
         this.setStatus("klicke Calculate");
         this.activateElement(button);
         this.setStatus("Calculate geklickt");
+        this.scheduleLaunchGroupClick(token);
+      }, delay);
+    }
+    scheduleLaunchGroupClick(token) {
+      const delay = this.getRandomDelayMs();
+      this.persistPhase("launch_group");
+      this.setStatus(`warte ${delay} ms`);
+      this.schedule(async () => {
+        if (!this.canContinue(token)) return;
+        if (this.botProtection.checkNow()) return;
+        this.setStatus("suche Launch");
+        const button = await this.waitForLaunchGroupButton(token);
+        if (!button) {
+          this.failRun("Launch nicht gefunden");
+          return;
+        }
+        this.setStatus("klicke Launch");
+        this.activateElement(button);
+        this.setStatus("Launch geklickt");
         this.state.runtime.running = false;
         this.persistRunning(false);
         this.persistPhase("");
@@ -392,6 +415,12 @@
       }, delay);
     }
     async waitForCalculateRuntimesButton(token) {
+      return this.waitForButton(token, () => this.findCalculateRuntimesButton());
+    }
+    async waitForLaunchGroupButton(token) {
+      return this.waitForButton(token, () => this.findLaunchGroupButton());
+    }
+    async waitForButton(token, finder) {
       return new Promise((resolve) => {
         const startedAt = Date.now();
         let observer = null;
@@ -406,7 +435,7 @@
             finish(null);
             return;
           }
-          const button = this.findCalculateRuntimesButton();
+          const button = finder();
           if (button) {
             finish(button);
             return;
@@ -583,6 +612,25 @@
           element.getAttribute("data-title")
         ].filter(Boolean).join(" "));
         return label.includes("calculate runtimes for each page") || label.includes("calculate runtimes") || label.includes("calculate runtime");
+      }) || null;
+    }
+    findLaunchGroupButton() {
+      const primary = Array.from(document.querySelectorAll("#sendMass")).find((element) => {
+        const onclick = element.getAttribute("onclick") || "";
+        const label = this.normalizeText(element.value || element.textContent || "");
+        return onclick.includes("sendGroup(0") && label.includes("launch group 1") && this.isClickableElement(element);
+      });
+      if (primary) return primary;
+      return Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], a, [role="button"], .btn')).find((element) => {
+        if (!this.isClickableElement(element)) return false;
+        const onclick = element.getAttribute("onclick") || "";
+        const label = this.normalizeText([
+          element.value,
+          element.textContent,
+          element.getAttribute("title"),
+          element.getAttribute("aria-label")
+        ].filter(Boolean).join(" "));
+        return onclick.includes("sendGroup(0") || label.includes("launch group 1");
       }) || null;
     }
     clickElement(element) {
