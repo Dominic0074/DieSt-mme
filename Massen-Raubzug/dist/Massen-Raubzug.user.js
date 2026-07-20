@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Massen-Raubzug
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.28
+// @version      0.1.29
 // @description  Massen-Raubzug fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -271,6 +271,8 @@
   var BUTTON_WAIT_TIMEOUT_MS = 2e4;
   var BUTTON_WAIT_INTERVAL_MS = 250;
   var CYCLE_DELAY_MS = 3 * 60 * 60 * 1e3;
+  var MIN_AFTER_LAUNCH_WAIT_MS = 3e3;
+  var MAX_AFTER_LAUNCH_WAIT_MS = 6e3;
   var App = class {
     constructor() {
       this.state = createDefaultState();
@@ -418,8 +420,26 @@
         this.setStatus("klicke Launch");
         this.activateElement(button);
         this.setStatus("Launch geklickt");
+        this.scheduleCycleAfterLaunch(button);
+      }, delay);
+    }
+    scheduleCycleAfterLaunch(launchButton) {
+      const token = this.runToken;
+      const delay = this.getRandomAfterLaunchDelayMs();
+      this.setStatus(`warte nach Launch ${delay} ms`);
+      this.schedule(async () => {
+        if (!this.canContinue(token)) return;
+        await this.waitForLaunchRequestToSettle(token, launchButton);
+        if (!this.canContinue(token)) return;
         this.startCycleTimer();
       }, delay);
+    }
+    async waitForLaunchRequestToSettle(token, launchButton) {
+      const startedAt = Date.now();
+      while (this.canContinue(token) && Date.now() - startedAt < BUTTON_WAIT_TIMEOUT_MS) {
+        if (!document.body.contains(launchButton) || launchButton.disabled) return;
+        await this.delay(BUTTON_WAIT_INTERVAL_MS);
+      }
     }
     startCycleTimer() {
       const nextRunAt = Date.now() + CYCLE_DELAY_MS;
@@ -525,6 +545,9 @@
     }
     getRandomDelayMs() {
       return Math.floor(MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS + 1));
+    }
+    getRandomAfterLaunchDelayMs() {
+      return Math.floor(MIN_AFTER_LAUNCH_WAIT_MS + Math.random() * (MAX_AFTER_LAUNCH_WAIT_MS - MIN_AFTER_LAUNCH_WAIT_MS + 1));
     }
     hydrateRuntime() {
       if (this.readPersistedStopped()) {
@@ -699,7 +722,7 @@
     }
     clickElement(element) {
       element.scrollIntoView?.({ block: "center", inline: "center" });
-      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+      for (const type of ["pointerdown", "mousedown", "mouseup"]) {
         element.dispatchEvent(new MouseEvent(type, {
           bubbles: true,
           cancelable: true,
