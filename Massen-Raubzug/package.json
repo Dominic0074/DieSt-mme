@@ -1,0 +1,9 @@
+{
+  "name": "massen-raubzug-userscript",
+  "version": "0.1.28",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/build-massen-raubzug.mjs"
+  }
+}

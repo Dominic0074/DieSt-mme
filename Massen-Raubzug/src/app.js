@@ -2,10 +2,10 @@ import { createDefaultState } from './core/default-state.js';
 import { BotProtectionService } from './core/bot-protection-service.js';
 import { StatusBanner } from './ui/status-banner.js';
 
-const RUNNING_STORAGE_KEY = 'massRecruting.running';
-const PHASE_STORAGE_KEY = 'massRecruting.phase';
-const STOPPED_STORAGE_KEY = 'massRecruting.stopped';
-const NEXT_RUN_AT_STORAGE_KEY = 'massRecruting.nextRunAt';
+const RUNNING_STORAGE_KEY = 'massenRaubzug.running';
+const PHASE_STORAGE_KEY = 'massenRaubzug.phase';
+const STOPPED_STORAGE_KEY = 'massenRaubzug.stopped';
+const NEXT_RUN_AT_STORAGE_KEY = 'massenRaubzug.nextRunAt';
 const MASS_SCAVENGE_SCRIPT_URL = 'https://shinko-to-kuma.com/scripts/massScavenge.js';
 const MIN_DELAY_MS = 1000;
 const MAX_DELAY_MS = 3000;
@@ -36,14 +36,14 @@ export class App {
 
   start() {
     this.banner.mount();
-    this.banner.onStart(() => this.startMassRecruting());
-    this.banner.onStop(() => this.stopMassRecruting());
+    this.banner.onStart(() => this.startMassenRaubzug());
+    this.banner.onStop(() => this.stopMassenRaubzug());
     this.botProtection.start();
     this.startBannerTicker();
     this.resumeIfRunning();
   }
 
-  async startMassRecruting() {
+  async startMassenRaubzug() {
     this.runToken += 1;
     this.clearScheduledActions();
     this.persistStopped(false);
@@ -67,7 +67,7 @@ export class App {
     }
   }
 
-  stopMassRecruting() {
+  stopMassenRaubzug() {
     this.runToken += 1;
     this.clearScheduledActions();
     this.state.runtime.running = false;
@@ -138,7 +138,7 @@ export class App {
       if (this.readPersistedStopped()) return false;
       return true;
     } catch (error) {
-      console.error('[Mass Recruting] massScavenge.js konnte nicht geladen werden.', error);
+      console.error('[Massen-Raubzug] massScavenge.js konnte nicht geladen werden.', error);
       this.failRun('Raubzug-Tool nicht geladen');
       return false;
     }
@@ -218,7 +218,7 @@ export class App {
 
       this.persistNextRunAt(null);
       this.persistPhase('');
-      await this.startMassRecruting();
+      await this.startMassenRaubzug();
     }, delay);
   }
 
@@ -301,7 +301,7 @@ export class App {
     this.persistPhase('');
     this.persistNextRunAt(null);
     this.banner.update();
-    console.warn(`[Mass Recruting] ${status}.`);
+    console.warn(`[Massen-Raubzug] ${status}.`);
   }
 
   setStatus(status) {
@@ -468,7 +468,7 @@ export class App {
     try {
       Function(code).call(window);
     } catch (error) {
-      console.error('[Mass Recruting] javascript-Link konnte nicht ausgefuehrt werden.', error);
+      console.error('[Massen-Raubzug] javascript-Link konnte nicht ausgefuehrt werden.', error);
       this.failRun('Raubzug-Start fehlgeschlagen');
     }
   }

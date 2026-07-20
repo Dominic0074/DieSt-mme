@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const projectDir = path.join(rootDir, 'Mass Recruting');
+const projectDir = path.join(rootDir, 'Massen-Raubzug');
 const packagePath = path.join(projectDir, 'package.json');
 const entryPoint = path.join(projectDir, 'src', 'main.js');
 const outDir = path.join(projectDir, 'dist');
-const outFile = path.join(outDir, 'Mass Recruting.user.js');
+const outFile = path.join(outDir, 'Massen-Raubzug.user.js');
 
 const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
 packageJson.version = bumpPatchVersion(packageJson.version);
@@ -40,17 +40,17 @@ function bumpPatchVersion(version) {
 
 function buildUserscriptHeader(version) {
   return `// ==UserScript==
-// @name         Mass Recruting
+// @name         Massen-Raubzug
 // @namespace    https://github.com/Dominic0074/DieSt-mme
 // @version      ${version}
-// @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
+// @description  Massen-Raubzug fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
 // @grant        none
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Mass%20Recruting/dist/Mass%20Recruting.user.js
-// @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Mass%20Recruting/dist/Mass%20Recruting.user.js
+// @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Massen-Raubzug/dist/Massen-Raubzug.user.js
+// @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Massen-Raubzug/dist/Massen-Raubzug.user.js
 // ==/UserScript==
 `;
 }

@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "build:retime-save": "node scripts/build-retime-save.mjs",
-    "build:mass-recruting": "node scripts/build-mass-recruting.mjs"
+    "build:massen-raubzug": "node scripts/build-massen-raubzug.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.2"

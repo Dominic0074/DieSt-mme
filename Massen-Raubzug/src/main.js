@@ -1,15 +1,15 @@
 import { App } from './app.js';
 
-console.info('[Mass Recruting] Userscript geladen', window.location.href);
+console.info('[Massen-Raubzug] Userscript geladen', window.location.href);
 
 function startApp() {
   try {
     const app = new App();
-    window.massRecrutingApp = app;
+    window.massenRaubzugApp = app;
     app.start();
-    console.info('[Mass Recruting] App gestartet');
+    console.info('[Massen-Raubzug] App gestartet');
   } catch (error) {
-    console.error('[Mass Recruting] Start fehlgeschlagen', error);
+    console.error('[Massen-Raubzug] Start fehlgeschlagen', error);
   }
 }
 

@@ -53,7 +53,7 @@ export class BotProtectionService {
     }
 
     const bodyClone = document.body?.cloneNode(true);
-    bodyClone?.querySelector('#ds-mass-recruting-status-banner')?.remove();
+    bodyClone?.querySelector('#ds-massen-raubzug-status-banner')?.remove();
 
     const bodyText = bodyClone?.innerText || '';
     return /du bist ein bot|bot.{0,30}schutz|captcha|bitte best.{0,5}tige|are you human/i.test(bodyText);
@@ -67,7 +67,7 @@ export class BotProtectionService {
     this.hooks.onTriggered?.();
 
     console.warn(
-      '%cBOT-SCHUTZ ERKANNT - Mass Recruting gestoppt. Bitte manuell loesen und Seite neu laden.',
+      '%cBOT-SCHUTZ ERKANNT - Massen-Raubzug gestoppt. Bitte manuell loesen und Seite neu laden.',
       'color: red; font-size: 14px; font-weight: bold'
     );
   }

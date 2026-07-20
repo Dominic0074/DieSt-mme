@@ -1,9 +1,0 @@
-{
-  "name": "mass-recruting-userscript",
-  "version": "0.1.27",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "node ../scripts/build-mass-recruting.mjs"
-  }
-}

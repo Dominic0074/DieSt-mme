@@ -1,5 +1,5 @@
-const BANNER_ID = 'ds-mass-recruting-status-banner';
-const STYLE_ID = 'ds-mass-recruting-status-style';
+const BANNER_ID = 'ds-massen-raubzug-status-banner';
+const STYLE_ID = 'ds-massen-raubzug-status-style';
 
 export class StatusBanner {
   /**
@@ -22,7 +22,7 @@ export class StatusBanner {
     const root = document.createElement('div');
     root.id = BANNER_ID;
     root.innerHTML = `
-      <div class="ds-mr-title">Mass Recruting</div>
+      <div class="ds-mr-title">Massen-Raubzug</div>
       <div class="ds-mr-line">
         <span>Safety</span>
         <strong data-field="safety">-</strong>

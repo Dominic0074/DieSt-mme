@@ -1,19 +1,19 @@
 // ==UserScript==
-// @name         Mass Recruting
+// @name         Massen-Raubzug
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.27
-// @description  Mass Recruting fuer Die Staemme mit Safety und Status-Banner.
+// @version      0.1.28
+// @description  Massen-Raubzug fuer Die Staemme mit Safety und Status-Banner.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
 // @match        https://die-staemme.de/game.php*
 // @grant        none
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Mass%20Recruting/dist/Mass%20Recruting.user.js
-// @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Mass%20Recruting/dist/Mass%20Recruting.user.js
+// @updateURL    https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Massen-Raubzug/dist/Massen-Raubzug.user.js
+// @downloadURL  https://raw.githubusercontent.com/Dominic0074/DieSt-mme/main/Massen-Raubzug/dist/Massen-Raubzug.user.js
 // ==/UserScript==
 
 (() => {
-  // Mass Recruting/src/core/default-state.js
+  // Massen-Raubzug/src/core/default-state.js
   function createDefaultState() {
     return {
       runtime: {
@@ -25,7 +25,7 @@
     };
   }
 
-  // Mass Recruting/src/core/bot-protection-service.js
+  // Massen-Raubzug/src/core/bot-protection-service.js
   var BotProtectionService = class {
     /**
      * @param {{ runtime: { botProtectionTriggered: boolean, botProtectionLastCheckAt: number | null } }} state
@@ -70,7 +70,7 @@
         if (style.display !== "none" && style.visibility !== "hidden") return true;
       }
       const bodyClone = document.body?.cloneNode(true);
-      bodyClone?.querySelector("#ds-mass-recruting-status-banner")?.remove();
+      bodyClone?.querySelector("#ds-massen-raubzug-status-banner")?.remove();
       const bodyText = bodyClone?.innerText || "";
       return /du bist ein bot|bot.{0,30}schutz|captcha|bitte best.{0,5}tige|are you human/i.test(bodyText);
     }
@@ -80,7 +80,7 @@
       this.playAlertSound();
       this.hooks.onTriggered?.();
       console.warn(
-        "%cBOT-SCHUTZ ERKANNT - Mass Recruting gestoppt. Bitte manuell loesen und Seite neu laden.",
+        "%cBOT-SCHUTZ ERKANNT - Massen-Raubzug gestoppt. Bitte manuell loesen und Seite neu laden.",
         "color: red; font-size: 14px; font-weight: bold"
       );
     }
@@ -108,9 +108,9 @@
     }
   };
 
-  // Mass Recruting/src/ui/status-banner.js
-  var BANNER_ID = "ds-mass-recruting-status-banner";
-  var STYLE_ID = "ds-mass-recruting-status-style";
+  // Massen-Raubzug/src/ui/status-banner.js
+  var BANNER_ID = "ds-massen-raubzug-status-banner";
+  var STYLE_ID = "ds-massen-raubzug-status-style";
   var StatusBanner = class {
     /**
      * @param {{ runtime: { botProtectionTriggered: boolean, botProtectionLastCheckAt: number | null, running: boolean, status: string } }} state
@@ -129,7 +129,7 @@
       const root = document.createElement("div");
       root.id = BANNER_ID;
       root.innerHTML = `
-      <div class="ds-mr-title">Mass Recruting</div>
+      <div class="ds-mr-title">Massen-Raubzug</div>
       <div class="ds-mr-line">
         <span>Safety</span>
         <strong data-field="safety">-</strong>
@@ -260,11 +260,11 @@
     }
   };
 
-  // Mass Recruting/src/app.js
-  var RUNNING_STORAGE_KEY = "massRecruting.running";
-  var PHASE_STORAGE_KEY = "massRecruting.phase";
-  var STOPPED_STORAGE_KEY = "massRecruting.stopped";
-  var NEXT_RUN_AT_STORAGE_KEY = "massRecruting.nextRunAt";
+  // Massen-Raubzug/src/app.js
+  var RUNNING_STORAGE_KEY = "massenRaubzug.running";
+  var PHASE_STORAGE_KEY = "massenRaubzug.phase";
+  var STOPPED_STORAGE_KEY = "massenRaubzug.stopped";
+  var NEXT_RUN_AT_STORAGE_KEY = "massenRaubzug.nextRunAt";
   var MASS_SCAVENGE_SCRIPT_URL = "https://shinko-to-kuma.com/scripts/massScavenge.js";
   var MIN_DELAY_MS = 1e3;
   var MAX_DELAY_MS = 3e3;
@@ -293,13 +293,13 @@
     }
     start() {
       this.banner.mount();
-      this.banner.onStart(() => this.startMassRecruting());
-      this.banner.onStop(() => this.stopMassRecruting());
+      this.banner.onStart(() => this.startMassenRaubzug());
+      this.banner.onStop(() => this.stopMassenRaubzug());
       this.botProtection.start();
       this.startBannerTicker();
       this.resumeIfRunning();
     }
-    async startMassRecruting() {
+    async startMassenRaubzug() {
       this.runToken += 1;
       this.clearScheduledActions();
       this.persistStopped(false);
@@ -318,7 +318,7 @@
         this.scheduleCalculateRuntimesClick();
       }
     }
-    stopMassRecruting() {
+    stopMassenRaubzug() {
       this.runToken += 1;
       this.clearScheduledActions();
       this.state.runtime.running = false;
@@ -377,7 +377,7 @@
         if (this.readPersistedStopped()) return false;
         return true;
       } catch (error) {
-        console.error("[Mass Recruting] massScavenge.js konnte nicht geladen werden.", error);
+        console.error("[Massen-Raubzug] massScavenge.js konnte nicht geladen werden.", error);
         this.failRun("Raubzug-Tool nicht geladen");
         return false;
       }
@@ -443,7 +443,7 @@
         if (this.botProtection.checkNow()) return;
         this.persistNextRunAt(null);
         this.persistPhase("");
-        await this.startMassRecruting();
+        await this.startMassenRaubzug();
       }, delay);
     }
     async waitForCalculateRuntimesButton(token) {
@@ -510,7 +510,7 @@
       this.persistPhase("");
       this.persistNextRunAt(null);
       this.banner.update();
-      console.warn(`[Mass Recruting] ${status}.`);
+      console.warn(`[Massen-Raubzug] ${status}.`);
     }
     setStatus(status) {
       this.state.runtime.status = status;
@@ -645,7 +645,7 @@
       try {
         Function(code).call(window);
       } catch (error) {
-        console.error("[Mass Recruting] javascript-Link konnte nicht ausgefuehrt werden.", error);
+        console.error("[Massen-Raubzug] javascript-Link konnte nicht ausgefuehrt werden.", error);
         this.failRun("Raubzug-Start fehlgeschlagen");
       }
     }
@@ -756,16 +756,16 @@
     }
   };
 
-  // Mass Recruting/src/main.js
-  console.info("[Mass Recruting] Userscript geladen", window.location.href);
+  // Massen-Raubzug/src/main.js
+  console.info("[Massen-Raubzug] Userscript geladen", window.location.href);
   function startApp() {
     try {
       const app = new App();
-      window.massRecrutingApp = app;
+      window.massenRaubzugApp = app;
       app.start();
-      console.info("[Mass Recruting] App gestartet");
+      console.info("[Massen-Raubzug] App gestartet");
     } catch (error) {
-      console.error("[Mass Recruting] Start fehlgeschlagen", error);
+      console.error("[Massen-Raubzug] Start fehlgeschlagen", error);
     }
   }
   if (document.body) {
