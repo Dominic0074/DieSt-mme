@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DorfRenamer
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.4
+// @version      0.1.5
 // @description  Benennt Doerfer nach fortlaufender Nummer und relativen Koordinaten zum Referenzdorf.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -117,13 +117,49 @@
       form.submit();
     }
     async loadVillageList(reference, currentVillage) {
-      const fetchedVillages = await this.fetchVillagesFromOverview();
+      const apiVillages = await this.fetchVillagesFromGameApi();
+      const fetchedVillages = apiVillages.length > 0 ? apiVillages : await this.fetchVillagesFromOverview();
       if (fetchedVillages.length > 0) {
         this.writeJson(this.getKnownVillagesStorageKey(), fetchedVillages);
         return fetchedVillages;
       }
       const cachedVillages = this.readKnownVillages();
       return this.mergeVillages(cachedVillages, [reference, currentVillage]);
+    }
+    async fetchVillagesFromGameApi() {
+      try {
+        const response = await fetch(this.buildVillageGroupApiUrl(), {
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json, text/html;q=0.9, */*;q=0.8"
+          }
+        });
+        if (!response.ok) return [];
+        const text = await response.text();
+        const trimmed = text.trim();
+        if (!trimmed) return [];
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          return this.parseVillagesFromJson(JSON.parse(trimmed));
+        }
+        return this.parseVillagesFromHtml(text);
+      } catch (error) {
+        console.warn("[DorfRenamer] Dorfliste konnte nicht ueber die Spiel-API geladen werden.", error);
+        return [];
+      }
+    }
+    buildVillageGroupApiUrl() {
+      const configuredLink = document.getElementById("show_groups_villages_link")?.value;
+      const url = new URL(configuredLink || "/game.php", window.location.origin);
+      if (!configuredLink) {
+        if (window.game_data?.village?.id) {
+          url.searchParams.set("village", String(window.game_data.village.id));
+        }
+        url.searchParams.set("screen", "groups");
+        url.searchParams.set("ajax", "load_villages_from_group");
+        url.searchParams.set("mode", "overview");
+      }
+      if (!url.searchParams.has("group_id")) url.searchParams.set("group_id", "0");
+      return url.toString();
     }
     async fetchVillagesFromOverview() {
       try {
@@ -173,11 +209,48 @@
       }
       return Array.from(byId.values());
     }
+    parseVillagesFromJson(payload) {
+      const byId = /* @__PURE__ */ new Map();
+      for (const item of this.walkJson(payload)) {
+        const village = this.normalizeVillageFromApiItem(item);
+        if (village) byId.set(village.id, village);
+      }
+      return Array.from(byId.values());
+    }
+    *walkJson(value) {
+      if (!value || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        for (const item of value) yield* this.walkJson(item);
+        return;
+      }
+      yield value;
+      for (const item of Object.values(value)) {
+        yield* this.walkJson(item);
+      }
+    }
+    normalizeVillageFromApiItem(item) {
+      const id = item.id ?? item.village_id ?? item.villageId;
+      const name = item.name ?? item.village_name ?? item.villageName ?? item.text;
+      const coord = item.coord ?? item.coords ?? item.coordinate ?? item.coordinates;
+      const coordMatch = String(coord || name || "").match(/\(?(\d{1,3})\|(\d{1,3})\)?/);
+      const x = Number(item.x ?? coordMatch?.[1]);
+      const y = Number(item.y ?? coordMatch?.[2]);
+      if (id === void 0 || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {
+        id: String(id),
+        name: this.extractName(String(name || ""), x, y),
+        x,
+        y
+      };
+    }
     getVillageNumber(villages, reference, currentVillage) {
       if (String(currentVillage.id) === String(reference.id)) return 1;
-      const orderedVillages = this.mergeVillages([reference], villages, [currentVillage]);
-      const index = orderedVillages.findIndex((village) => String(village.id) === String(currentVillage.id));
-      return index >= 0 ? index + 1 : null;
+      const otherVillages = this.mergeVillages(villages, this.readKnownVillages()).filter((village) => String(village.id) !== String(currentVillage.id)).filter((village) => String(village.id) !== String(reference.id));
+      const highestIndex = otherVillages.reduce((highest, village) => {
+        const index = this.extractNamingIndex(village.name);
+        return index ? Math.max(highest, index) : highest;
+      }, 1);
+      return highestIndex + 1;
     }
     buildVillageName(villageNumber, reference, currentVillage) {
       const relativeX = currentVillage.x - reference.x;
@@ -235,6 +308,12 @@
     }
     isValidVillage(village) {
       return Boolean(village) && village.id !== void 0 && Number.isFinite(Number(village.x)) && Number.isFinite(Number(village.y));
+    }
+    extractNamingIndex(name) {
+      const match = String(name || "").trim().match(/^(\d{3})\s+[+-]\d{2}\s+[+-]\d{2}\b/);
+      if (!match) return null;
+      const index = Number(match[1]);
+      return Number.isInteger(index) && index > 0 ? index : null;
     }
     updateReferenceInfo() {
       const info = document.getElementById("dorf-renamer-reference-info");
