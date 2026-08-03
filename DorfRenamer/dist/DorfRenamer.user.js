@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DorfRenamer
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.6
+// @version      0.1.7
 // @description  Benennt Doerfer nach fortlaufender Nummer und relativen Koordinaten zum Referenzdorf.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -17,6 +17,7 @@
   var ROOT_ID = "dorf-renamer-controls";
   var REFERENCE_STORAGE_PREFIX = "dorfRenamer.referenceVillage";
   var KNOWN_VILLAGES_STORAGE_PREFIX = "dorfRenamer.knownVillages";
+  var INDEX_REGISTRY_STORAGE_PREFIX = "dorfRenamer.indexRegistry";
   var App = class {
     start() {
       if (!this.isMainScreen()) return;
@@ -113,6 +114,7 @@
         this.showSuccess(`Dorfname ist bereits korrekt: ${nextName}`);
         return;
       }
+      this.persistVillageIndex(currentVillage, villageNumber, nextName);
       nameInput.value = nextName;
       form.submit();
     }
@@ -288,12 +290,58 @@
     }
     getVillageNumber(villages, reference, currentVillage) {
       if (String(currentVillage.id) === String(reference.id)) return 1;
-      const otherVillages = this.mergeVillages(villages, this.readKnownVillages()).filter((village) => String(village.id) !== String(currentVillage.id)).filter((village) => String(village.id) !== String(reference.id));
-      const highestIndex = otherVillages.reduce((highest, village) => {
+      const registry = this.syncIndexRegistry(villages, reference);
+      const currentEntry = registry.villages[String(currentVillage.id)];
+      const currentIndex = this.extractNamingIndex(currentVillage.name) || Number(currentEntry?.index) || null;
+      const highestOtherIndex = Object.values(registry.villages).reduce((highest, village) => {
+        if (String(village.id) === String(currentVillage.id)) return highest;
+        if (String(village.id) === String(reference.id)) return highest;
         const index = this.extractNamingIndex(village.name);
-        return index ? Math.max(highest, index) : highest;
+        const storedIndex = Number(village.index);
+        const effectiveIndex = Number.isInteger(storedIndex) && storedIndex > 0 ? storedIndex : index;
+        return effectiveIndex ? Math.max(highest, effectiveIndex) : highest;
       }, 1);
-      return highestIndex + 1;
+      if (currentIndex && currentIndex > highestOtherIndex) return currentIndex;
+      return highestOtherIndex + 1;
+    }
+    syncIndexRegistry(villages, reference) {
+      const registry = this.readIndexRegistry();
+      registry.villages[String(reference.id)] = {
+        id: String(reference.id),
+        name: this.buildVillageName(1, reference, reference),
+        index: 1,
+        x: Number(reference.x),
+        y: Number(reference.y),
+        updatedAt: Date.now()
+      };
+      for (const village of this.mergeVillages(villages, this.readKnownVillages())) {
+        const index = this.extractNamingIndex(village.name);
+        if (!index) continue;
+        const id = String(village.id);
+        registry.villages[id] = {
+          id,
+          name: String(village.name || ""),
+          index,
+          x: Number(village.x),
+          y: Number(village.y),
+          updatedAt: Date.now()
+        };
+      }
+      this.writeJson(this.getIndexRegistryStorageKey(), registry);
+      return registry;
+    }
+    persistVillageIndex(village, index, name) {
+      const registry = this.readIndexRegistry();
+      registry.villages[String(village.id)] = {
+        id: String(village.id),
+        name,
+        index,
+        x: Number(village.x),
+        y: Number(village.y),
+        updatedAt: Date.now()
+      };
+      this.writeJson(this.getIndexRegistryStorageKey(), registry);
+      this.cacheKnownVillage({ ...village, name });
     }
     buildVillageName(villageNumber, reference, currentVillage) {
       const relativeX = currentVillage.x - reference.x;
@@ -333,6 +381,13 @@
       const villages = this.readJson(this.getKnownVillagesStorageKey());
       return Array.isArray(villages) ? villages.filter((village) => this.isValidVillage(village)) : [];
     }
+    readIndexRegistry() {
+      const registry = this.readJson(this.getIndexRegistryStorageKey());
+      if (!registry || typeof registry !== "object" || !registry.villages || typeof registry.villages !== "object") {
+        return { villages: {} };
+      }
+      return registry;
+    }
     mergeVillages(...groups) {
       const byId = /* @__PURE__ */ new Map();
       for (const group of groups) {
@@ -369,6 +424,9 @@
     }
     getKnownVillagesStorageKey() {
       return `${KNOWN_VILLAGES_STORAGE_PREFIX}.${this.getStorageScope()}`;
+    }
+    getIndexRegistryStorageKey() {
+      return `${INDEX_REGISTRY_STORAGE_PREFIX}.${this.getStorageScope()}`;
     }
     getStorageScope() {
       const world = window.game_data?.world || location.hostname;

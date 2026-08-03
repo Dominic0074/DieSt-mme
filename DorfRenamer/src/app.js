@@ -1,6 +1,7 @@
 const ROOT_ID = 'dorf-renamer-controls';
 const REFERENCE_STORAGE_PREFIX = 'dorfRenamer.referenceVillage';
 const KNOWN_VILLAGES_STORAGE_PREFIX = 'dorfRenamer.knownVillages';
+const INDEX_REGISTRY_STORAGE_PREFIX = 'dorfRenamer.indexRegistry';
 
 export class App {
   start() {
@@ -117,6 +118,7 @@ export class App {
       return;
     }
 
+    this.persistVillageIndex(currentVillage, villageNumber, nextName);
     nameInput.value = nextName;
     form.submit();
   }
@@ -332,15 +334,66 @@ export class App {
   getVillageNumber(villages, reference, currentVillage) {
     if (String(currentVillage.id) === String(reference.id)) return 1;
 
-    const otherVillages = this.mergeVillages(villages, this.readKnownVillages())
-      .filter(village => String(village.id) !== String(currentVillage.id))
-      .filter(village => String(village.id) !== String(reference.id));
-    const highestIndex = otherVillages.reduce((highest, village) => {
+    const registry = this.syncIndexRegistry(villages, reference);
+    const currentEntry = registry.villages[String(currentVillage.id)];
+    const currentIndex = this.extractNamingIndex(currentVillage.name) || Number(currentEntry?.index) || null;
+    const highestOtherIndex = Object.values(registry.villages).reduce((highest, village) => {
+      if (String(village.id) === String(currentVillage.id)) return highest;
+      if (String(village.id) === String(reference.id)) return highest;
+
       const index = this.extractNamingIndex(village.name);
-      return index ? Math.max(highest, index) : highest;
+      const storedIndex = Number(village.index);
+      const effectiveIndex = Number.isInteger(storedIndex) && storedIndex > 0 ? storedIndex : index;
+      return effectiveIndex ? Math.max(highest, effectiveIndex) : highest;
     }, 1);
 
-    return highestIndex + 1;
+    if (currentIndex && currentIndex > highestOtherIndex) return currentIndex;
+    return highestOtherIndex + 1;
+  }
+
+  syncIndexRegistry(villages, reference) {
+    const registry = this.readIndexRegistry();
+
+    registry.villages[String(reference.id)] = {
+      id: String(reference.id),
+      name: this.buildVillageName(1, reference, reference),
+      index: 1,
+      x: Number(reference.x),
+      y: Number(reference.y),
+      updatedAt: Date.now()
+    };
+
+    for (const village of this.mergeVillages(villages, this.readKnownVillages())) {
+      const index = this.extractNamingIndex(village.name);
+      if (!index) continue;
+
+      const id = String(village.id);
+      registry.villages[id] = {
+        id,
+        name: String(village.name || ''),
+        index,
+        x: Number(village.x),
+        y: Number(village.y),
+        updatedAt: Date.now()
+      };
+    }
+
+    this.writeJson(this.getIndexRegistryStorageKey(), registry);
+    return registry;
+  }
+
+  persistVillageIndex(village, index, name) {
+    const registry = this.readIndexRegistry();
+    registry.villages[String(village.id)] = {
+      id: String(village.id),
+      name,
+      index,
+      x: Number(village.x),
+      y: Number(village.y),
+      updatedAt: Date.now()
+    };
+    this.writeJson(this.getIndexRegistryStorageKey(), registry);
+    this.cacheKnownVillage({ ...village, name });
   }
 
   buildVillageName(villageNumber, reference, currentVillage) {
@@ -388,6 +441,15 @@ export class App {
   readKnownVillages() {
     const villages = this.readJson(this.getKnownVillagesStorageKey());
     return Array.isArray(villages) ? villages.filter(village => this.isValidVillage(village)) : [];
+  }
+
+  readIndexRegistry() {
+    const registry = this.readJson(this.getIndexRegistryStorageKey());
+    if (!registry || typeof registry !== 'object' || !registry.villages || typeof registry.villages !== 'object') {
+      return { villages: {} };
+    }
+
+    return registry;
   }
 
   mergeVillages(...groups) {
@@ -438,6 +500,10 @@ export class App {
 
   getKnownVillagesStorageKey() {
     return `${KNOWN_VILLAGES_STORAGE_PREFIX}.${this.getStorageScope()}`;
+  }
+
+  getIndexRegistryStorageKey() {
+    return `${INDEX_REGISTRY_STORAGE_PREFIX}.${this.getStorageScope()}`;
   }
 
   getStorageScope() {
