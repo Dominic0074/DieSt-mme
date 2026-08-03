@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DorfRenamer
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.7
+// @version      0.1.8
 // @description  Benennt Doerfer nach fortlaufender Nummer und relativen Koordinaten zum Referenzdorf.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
