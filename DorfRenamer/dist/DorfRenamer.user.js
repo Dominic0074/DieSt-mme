@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DorfRenamer
 // @namespace    https://github.com/Dominic0074/DieSt-mme
-// @version      0.1.2
+// @version      0.1.4
 // @description  Benennt Doerfer nach fortlaufender Nummer und relativen Koordinaten zum Referenzdorf.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -175,10 +175,9 @@
     }
     getVillageNumber(villages, reference, currentVillage) {
       if (String(currentVillage.id) === String(reference.id)) return 1;
-      const merged = this.mergeVillages(villages, [reference, currentVillage]);
-      const otherVillages = merged.filter((village) => String(village.id) !== String(reference.id)).sort((left, right) => Number(left.id) - Number(right.id));
-      const index = otherVillages.findIndex((village) => String(village.id) === String(currentVillage.id));
-      return index >= 0 ? index + 2 : null;
+      const orderedVillages = this.mergeVillages([reference], villages, [currentVillage]);
+      const index = orderedVillages.findIndex((village) => String(village.id) === String(currentVillage.id));
+      return index >= 0 ? index + 1 : null;
     }
     buildVillageName(villageNumber, reference, currentVillage) {
       const relativeX = currentVillage.x - reference.x;

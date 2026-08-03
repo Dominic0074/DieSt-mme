@@ -192,13 +192,9 @@ export class App {
   getVillageNumber(villages, reference, currentVillage) {
     if (String(currentVillage.id) === String(reference.id)) return 1;
 
-    const merged = this.mergeVillages(villages, [reference, currentVillage]);
-    const otherVillages = merged
-      .filter(village => String(village.id) !== String(reference.id))
-      .sort((left, right) => Number(left.id) - Number(right.id));
-
-    const index = otherVillages.findIndex(village => String(village.id) === String(currentVillage.id));
-    return index >= 0 ? index + 2 : null;
+    const orderedVillages = this.mergeVillages([reference], villages, [currentVillage]);
+    const index = orderedVillages.findIndex(village => String(village.id) === String(currentVillage.id));
+    return index >= 0 ? index + 1 : null;
   }
 
   buildVillageName(villageNumber, reference, currentVillage) {
