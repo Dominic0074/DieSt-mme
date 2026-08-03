@@ -6,7 +6,9 @@
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "build:retime-save": "node scripts/build-retime-save.mjs",
-    "build:massen-raubzug": "node scripts/build-massen-raubzug.mjs"
+    "build:massen-raubzug": "node scripts/build-massen-raubzug.mjs",
+    "build:angriffs-planer": "node scripts/build-angriffs-planer.mjs",
+    "build:dorf-renamer": "node scripts/build-dorf-renamer.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.24.2"

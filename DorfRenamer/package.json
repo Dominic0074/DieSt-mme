@@ -1,0 +1,9 @@
+{
+  "name": "dorf-renamer-userscript",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../scripts/build-dorf-renamer.mjs"
+  }
+}
