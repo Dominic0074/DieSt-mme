@@ -122,8 +122,13 @@ export class App {
   }
 
   async loadVillageList(reference, currentVillage) {
-    const apiVillages = await this.fetchVillagesFromGameApi();
-    const fetchedVillages = apiVillages.length > 0 ? apiVillages : await this.fetchVillagesFromOverview();
+    const mapVillages = await this.fetchVillagesFromMapData();
+    const apiVillages = mapVillages.length > 0 ? [] : await this.fetchVillagesFromGameApi();
+    const fetchedVillages = mapVillages.length > 0
+      ? mapVillages
+      : apiVillages.length > 0
+        ? apiVillages
+        : await this.fetchVillagesFromOverview();
     if (fetchedVillages.length > 0) {
       this.writeJson(this.getKnownVillagesStorageKey(), fetchedVillages);
       return fetchedVillages;
@@ -131,6 +136,25 @@ export class App {
 
     const cachedVillages = this.readKnownVillages();
     return this.mergeVillages(cachedVillages, [reference, currentVillage]);
+  }
+
+  async fetchVillagesFromMapData() {
+    try {
+      const playerId = String(window.game_data?.player?.id || '');
+      if (!playerId) return [];
+
+      const response = await fetch(`${window.location.origin}/map/village.txt?_=${Date.now()}`, {
+        credentials: 'omit',
+        cache: 'no-store'
+      });
+      if (!response.ok) return [];
+
+      const text = await response.text();
+      return this.parseVillagesFromMapData(text, playerId);
+    } catch (error) {
+      console.warn('[DorfRenamer] Dorfliste konnte nicht aus den Kartendaten geladen werden.', error);
+      return [];
+    }
   }
 
   async fetchVillagesFromGameApi() {
@@ -228,6 +252,38 @@ export class App {
     }
 
     return Array.from(byId.values());
+  }
+
+  parseVillagesFromMapData(text, playerId) {
+    const villages = [];
+
+    for (const line of String(text || '').split('\n')) {
+      const fields = line.trim().split(',');
+      if (fields.length < 5 || fields[4] !== playerId) continue;
+
+      const id = fields[0];
+      const name = this.decodeMapField(fields[1]);
+      const x = Number(fields[2]);
+      const y = Number(fields[3]);
+      if (!id || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      villages.push({
+        id: String(id),
+        name,
+        x,
+        y
+      });
+    }
+
+    return villages;
+  }
+
+  decodeMapField(value) {
+    try {
+      return decodeURIComponent(String(value || '').replace(/\+/g, ' '));
+    } catch {
+      return String(value || '').replace(/\+/g, ' ');
+    }
   }
 
   parseVillagesFromJson(payload) {
