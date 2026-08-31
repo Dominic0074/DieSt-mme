@@ -1,0 +1,45 @@
+<Window x:Class="StämmeApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:StämmeApp"
+        mc:Ignorable="d"
+        Title="Die Staemme"
+        Height="450"
+        Width="800">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="10"
+                BorderBrush="#CCCCCC"
+                BorderThickness="0,0,0,1">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left"
+                           VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           Text="Die Staemme" />
+
+                <TextBlock DockPanel.Dock="Left"
+                           Margin="16,0,0,0"
+                           VerticalAlignment="Center"
+                           Text="{Binding Configuration.World, StringFormat=Welt: {0}}" />
+
+                <Button DockPanel.Dock="Right"
+                        MinWidth="110"
+                        Padding="10,4"
+                        Click="OnSettingsClick"
+                        Content="Einstellungen" />
+            </DockPanel>
+        </Border>
+
+        <TextBlock Grid.Row="1"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Text="Browser wird ueber Playwright gestartet..." />
+    </Grid>
+</Window>

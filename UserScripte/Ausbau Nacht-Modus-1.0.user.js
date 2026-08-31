@@ -1750,7 +1750,7 @@ function isUnitsOverviewPage() {
 }
 
 function isBuildingsOverviewPage() {
-  return location.href.includes('screen=overview_villages') && location.href.includes('mode=buildings');
+  return location.href.includes('screen=overview_villages') && location.href.includes('mode=prod');
 }
 
 function isMainBuildingPage() {
@@ -1788,7 +1788,7 @@ function buildGameUrl(screen, mode) {
 }
 
 function getBuildingsUrl() {
-  return buildGameUrl('overview_villages', 'buildings');
+  return buildGameUrl('overview_villages', 'prod');
 }
 
 function getBarracksUrl() {
@@ -2821,7 +2821,7 @@ async function startScavengingRaids() {
 
 async function startNightBuilding() {
 
-  if (!location.href.includes('screen=overview_villages') || !location.href.includes('mode=buildings')) return;
+  if (!location.href.includes('screen=overview_villages') || !location.href.includes('mode=prod')) return;
 
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return; }
 

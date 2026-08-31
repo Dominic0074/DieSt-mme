@@ -1,0 +1,44 @@
+<Window x:Class="StämmeApp.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:StämmeApp"
+        mc:Ignorable="d"
+        Title="Einstellungen"
+        Height="190"
+        Width="360"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Einstellungen"
+                   FontSize="18"
+                   FontWeight="SemiBold" />
+
+        <StackPanel Grid.Row="1"
+                    Margin="0,16,0,0">
+            <TextBlock Margin="0,0,0,4"
+                       Text="Zu spielende Welt" />
+            <TextBox Text="{Binding World, UpdateSourceTrigger=PropertyChanged}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3"
+                    HorizontalAlignment="Right"
+                    Orientation="Horizontal">
+            <Button MinWidth="80"
+                    Margin="0,0,8,0"
+                    Command="{Binding CancelCommand}"
+                    Content="Abbrechen" />
+            <Button MinWidth="80"
+                    Command="{Binding SaveCommand}"
+                    Content="Speichern" />
+        </StackPanel>
+    </Grid>
+</Window>

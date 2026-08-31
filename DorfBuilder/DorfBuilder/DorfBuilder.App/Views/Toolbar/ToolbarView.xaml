@@ -1,0 +1,24 @@
+<UserControl x:Class="DorfBuilder.App.Views.Toolbar.ToolbarView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Grid.ColumnSpan="2"
+            Background="White"
+            BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="0,0,0,1">
+        <Menu>
+            <MenuItem Header="_Datei">
+                <MenuItem Header="_Startseite"
+                          Command="{Binding ShowHomeCommand}" />
+                <MenuItem Header="_Die Staemme oeffnen"
+                          Command="{Binding OpenStaemmeCommand}" />
+                <Separator />
+                <MenuItem Header="_Beenden"
+                          Command="{Binding ExitCommand}" />
+            </MenuItem>
+            <MenuItem Header="_Hilfe">
+                <MenuItem Header="_Info"
+                          Command="{Binding ShowInfoCommand}" />
+            </MenuItem>
+        </Menu>
+    </Border>
+</UserControl>
