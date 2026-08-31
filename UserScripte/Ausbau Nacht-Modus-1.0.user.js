@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ausbau Nacht-Modus
 // @namespace    http://tampermonkey.net/
-// @version      1.26
+// @version      1.27
 // @description  Baut die Nacht-Warteschlange ab (ueberspringt nicht baubare Gebaeude). Sofortiger Stop bei Bot-Schutz. Raubzug liest Dorf- und Raubzugtruppen am Versammlungsplatz aus, Auto-Truppen-Schalter, Auto-Rekrutierung (AJAX-sicher) fuer Kaserne und Stall, Start von jeder Seite aus.
 // @author       kk
 // @match        https://*.die-staemme.de/game.php*
@@ -740,18 +740,27 @@ function stopRaidAutomation() {
   updateStatusBanner();
 }
 
-// NEU: Wenn die Automatik aktiv ist, aber wir auf einer Seite stehen, die nicht
-// Teil des Raubzug-Zyklus ist (Bericht, Karte, Forschung ...), ueber die
-// Kaserne in den Zyklus einsteigen.
+function isRaidCycleStartPending() {
+  return localStorage.getItem(RAID_PREFETCH_UNITS_KEY) === '1';
+}
+
+function isRaidCycleSwitchDue() {
+  const nextSwitchAt = Number(localStorage.getItem(RAID_NEXT_SWITCH_KEY));
+  return Number.isFinite(nextSwitchAt) && nextSwitchAt > 0 && nextSwitchAt <= Date.now();
+}
+
+// Steigt nur dann automatisch in den Zyklus ein, wenn ein Start ausdruecklich
+// vorgemerkt ist oder der gespeicherte Raubzug-Timer faellig wurde.
 function enterRaidCycleFromAnywhere() {
   if (!isRaidAutomationActive()) return false;
   if (BOT_PROTECTION_TRIGGERED) return false;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return false; }
 
+  if (!isRaidCycleStartPending() && !isRaidCycleSwitchDue()) return false;
+
   // Seiten, die bereits Teil des Zyklus sind, behandeln sich selbst.
   if (isBarracksPage() || isStablePage() || isUnitsOverviewPage() || isScavengePage() || isBuildingsOverviewPage()) return false;
 
-  // Ueberall sonst: ueber die Kaserne in den Zyklus einsteigen.
   localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
   window.location.href = getBarracksUrl();
   return true;
@@ -787,7 +796,6 @@ async function handleRaidUnitPrefetch() {
   if (goToStableNext) {
     window.location.href = getStableUrl();
   } else {
-    localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
     window.location.href = getUnitsOverviewUrl();
   }
   return true;
@@ -800,7 +808,7 @@ async function handleRaidArmyOverview() {
   saveStoredRaidUnits(armyUnits);
   console.log(`Truppenbasis aktualisiert: ${formatRaidUnits(armyUnits) || 'keine Truppen'}.`);
 
-  if (!isRaidAutomationActive()) return false;
+  if (!isRaidAutomationActive() || (!isRaidCycleStartPending() && !isRaidCycleSwitchDue())) return false;
   if (BOT_PROTECTION_TRIGGERED) return true;
   if (isBotProtectionActive()) { triggerBotProtectionStop(); return true; }
 
@@ -1926,24 +1934,32 @@ function formatRaidReadySummary(fallbackTimestamp) {
     .join('\n');
 }
 
-// GEAENDERT: Laeuft jetzt auch ohne gespeicherte Fertig-Zeit weiter (Selbstheilung),
-// damit der Zyklus nicht auf der Gebaeudeuebersicht haengen bleibt.
 function scheduleRaidPageSwitch() {
   if (!RAID_CONFIG.switchPages || !isRaidAutomationActive() || !isBuildingsOverviewPage()) return;
 
   const nextReadyAt = getStoredNextRaidReadyAt();
-  const bufferMs = random(RAID_CONFIG.nextRaidBufferMin, RAID_CONFIG.nextRaidBufferMax);
+  if (!nextReadyAt) {
+    localStorage.removeItem(RAID_NEXT_SWITCH_KEY);
+    updateStatusBanner();
+    return;
+  }
 
-  // Bekannte Fertig-Zeit -> bis dahin warten. Sonst kurzer Fallback,
-  // damit der Zyklus auch ohne gespeicherte Zeit weiterlaeuft.
-  const waitMs = nextReadyAt
-    ? Math.max(0, nextReadyAt - Date.now() + bufferMs)
-    : random(RELOAD_WAIT_MIN, RELOAD_WAIT_MAX);
+  const bufferMs = random(RAID_CONFIG.nextRaidBufferMin, RAID_CONFIG.nextRaidBufferMax);
+  const waitMs = Math.max(0, nextReadyAt - Date.now() + bufferMs);
 
   const switchAt = Date.now() + waitMs;
   localStorage.setItem(RAID_NEXT_SWITCH_KEY, String(switchAt));
   updateStatusBanner();
   console.log(`Raubzug-Wechsel geplant um ${new Date(switchAt).toLocaleTimeString('de-DE')}.`);
+}
+
+function scheduleStoredRaidCycleSwitch() {
+  if (!RAID_CONFIG.switchPages || !isRaidAutomationActive()) return;
+
+  const switchAt = Number(localStorage.getItem(RAID_NEXT_SWITCH_KEY));
+  if (!Number.isFinite(switchAt) || switchAt <= 0) return;
+
+  const waitMs = Math.max(0, switchAt - Date.now());
 
   setTimeout(() => {
     if (!isRaidAutomationActive()) return;
@@ -1952,7 +1968,11 @@ function scheduleRaidPageSwitch() {
     localStorage.removeItem(RAID_READY_TIMES_KEY);
     localStorage.removeItem(RAID_NEXT_SWITCH_KEY);
     localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
-    window.location.href = getBarracksUrl();
+    if (isBarracksPage()) {
+      handleRaidUnitPrefetch();
+    } else {
+      window.location.href = getBarracksUrl();
+    }
   }, waitMs);
 }
 
@@ -2814,6 +2834,7 @@ async function startScavengingRaids() {
     storeNextRaidReadyAt();
     await returnToBuildingsOverview();
   } finally {
+    localStorage.removeItem(RAID_PREFETCH_UNITS_KEY);
     RAID_RUNNING = false;
     updateStatusBanner();
   }
@@ -2933,11 +2954,17 @@ async function startNightBuilding() {
 
   // Auf Kaserne/Stall im Automatik-Betrieb sicherstellen, dass der Prefetch laeuft.
   // Der Prefetch erledigt Rekrutierung, Auslesen und Weiterleitung selbst.
-  if (isRaidAutomationActive() && (isBarracksPage() || isStablePage()) && !BOT_PROTECTION_TRIGGERED) {
+  if (
+    isRaidAutomationActive()
+    && (isBarracksPage() || isStablePage())
+    && !BOT_PROTECTION_TRIGGERED
+    && (isRaidCycleStartPending() || isRaidCycleSwitchDue())
+  ) {
     localStorage.setItem(RAID_PREFETCH_UNITS_KEY, '1');
   }
 
   scheduleRaidPageSwitch();
+  scheduleStoredRaidCycleSwitch();
 
   handleRaidUnitPrefetch().then(prefetchHandled => {
     if (prefetchHandled) return;
@@ -2949,7 +2976,7 @@ async function startNightBuilding() {
         runStableAutoRecruitment();
         return;
       }
-      if (RAID_CONFIG.autoStart && isScavengePage()) {
+      if (RAID_CONFIG.autoStart && isScavengePage() && (isRaidCycleStartPending() || isRaidCycleSwitchDue())) {
         startScavengingRaids();
       }
     });
